@@ -37,6 +37,7 @@ For the step-by-step call flow, see [sequence.md](sequence.md).
 | `cli.py` | The `observe` command. Parses arguments and calls the other modules. |
 | `hook.py` | Runs inside the agent. Reads stdin, trims long strings, inserts 1 raw row. |
 | `install.py` | Adds and removes our hooks in the agent config files. Makes a backup first. |
+| `cleanup.py` | Deletes what observe created (data files, backups), and nothing else. |
 | `db.py` | Opens SQLite (WAL mode) and creates the tables. |
 | `normalize.py` | Turns raw rows into sessions, events, and files. Pairs pre and post tool events. |
 | `adapters.py` | The rules for each agent: maps a tool name to a category, a target, and files. |

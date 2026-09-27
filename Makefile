@@ -31,8 +31,8 @@ install: ## Install the observe command and add hooks to detected agents
 	uv tool install --force .
 	observe install
 
-uninstall: ## Remove the hooks and the observe command
-	-observe uninstall
+uninstall: ## Remove the hooks, recorded data, and the observe command
+	-observe uninstall --purge
 	uv tool uninstall observe
 
 clean: ## Remove build and cache files
