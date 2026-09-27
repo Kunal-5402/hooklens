@@ -95,3 +95,7 @@ make help      # list every target
 ```
 
 Environment overrides: `OBSERVE_HOME`, `OBSERVE_CLAUDE_SETTINGS`, `CODEX_HOME`, `OBSERVE_CURSOR_HOME`.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
