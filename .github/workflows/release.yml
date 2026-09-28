@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+env:
+  RELEASE_NAME: ${{ github.event.release.name }}
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.check.outputs.VERSION }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check release version
+        id: check
+        shell: bash
+        run: |-
+          set -euo pipefail
+          VERSION=$(echo "${{ env.RELEASE_NAME }}" | sed 's/^v//')
+          PATTERN='^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'
+
+          if [[ ! "$VERSION" =~ $PATTERN ]]; then
+            echo "Invalid version: '${{ env.RELEASE_NAME }}'. Use a release name like 0.1.0 or v0.1.0."
+            exit 1
+          fi
+
+          PKG=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n 1)
+          SRC=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/observe/__init__.py | head -n 1)
+
+          if [[ "$PKG" != "$VERSION" ]]; then
+            echo "pyproject.toml version '$PKG' does not match release '$VERSION'."
+            exit 1
+          fi
+          if [[ "$SRC" != "$VERSION" ]]; then
+            echo "src/observe/__init__.py version '$SRC' does not match release '$VERSION'."
+            exit 1
+          fi
+
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Release version $VERSION matches the package."
+
+  publish-pypi:
+    needs:
+      - version-check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install and test
+        run: |-
+          uv sync --locked --group dev
+          uv run pytest -q
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.14.2
+        with:
+          packages-dir: dist/
