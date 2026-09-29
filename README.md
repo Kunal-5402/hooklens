@@ -35,11 +35,25 @@ observe codex show [id]    # only Codex sessions, optionally open one session
 observe cursor show        # only Cursor sessions
 observe sessions           # list recent sessions in the terminal
 observe doctor             # check hooks, database, and recent events
-observe uninstall          # remove the hooks (other hooks stay)
 ```
 
 `observe show` serves the UI on `http://127.0.0.1:7878` (another free port if 7878 is busy).
 The page refreshes every 5 seconds while **Live** is on.
+
+## Remove
+
+```sh
+observe uninstall            # remove the observe hooks; other hooks and settings stay
+observe clear                # delete all recorded sessions; the hooks stay
+observe claude clear         # delete only the Claude Code sessions (also: codex, cursor)
+observe uninstall --purge    # remove the hooks, the recorded data, and observe's config backups
+uv tool uninstall observe    # then remove the command itself (or: pipx uninstall observe)
+```
+
+Add `--dry-run` to see what a command would remove, and `--yes` to skip the question.
+`observe` deletes only the files that it created. It removes only its own entries from agent
+config files. It deletes a Codex or Cursor `hooks.json` only if the file is empty after that, and
+it never deletes `~/.claude/settings.json`.
 
 ## How it works
 
@@ -82,7 +96,7 @@ All data stays in `~/.observe/observe.db`. Each string field is trimmed to 4096 
 before it is stored, so large file contents and command output are not kept. Set
 `OBSERVE_MAX_FIELD` in your shell to change the limit (`0` keeps everything).
 Cursor sends your account email with each event; `observe` removes it before it stores the event.
-Delete `~/.observe/` to remove all recorded data.
+Run `observe clear` to delete all recorded data.
 
 ## Development
 
