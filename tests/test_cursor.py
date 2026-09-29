@@ -99,6 +99,7 @@ def test_cursor_install_uses_the_flat_format():
     assert not {"preToolUse", "beforeShellExecution", "beforeReadFile"} & set(config["hooks"])
     assert set(install.installed_events("cursor")) == set(install.EVENTS["cursor"])
 
-    _, removed = install.uninstall("cursor")
+    _, removed, deleted = install.uninstall("cursor")
+    assert not deleted  # the file still holds another hook
     assert removed == len(install.EVENTS["cursor"])
     assert json.loads(path.read_text()) == {"version": 1, "hooks": {"stop": [mine]}}

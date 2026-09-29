@@ -82,12 +82,23 @@ def _load(path: Path) -> dict:
     return data
 
 
+def _backup(path: Path) -> Path | None:
+    if not path.exists():
+        return None
+    backup = path.with_name(f"{path.name}.observe-backup-{time.strftime('%Y%m%d-%H%M%S')}")
+    shutil.copy2(path, backup)
+    return backup
+
+
+def backups(agent: str) -> list[Path]:
+    """Config backups that observe made for this agent."""
+    path = config_path(agent)
+    return sorted(path.parent.glob(f"{path.name}.observe-backup-*"))
+
+
 def _save(path: Path, data: dict) -> Path | None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    backup = None
-    if path.exists():
-        backup = path.with_name(f"{path.name}.observe-backup-{time.strftime('%Y%m%d-%H%M%S')}")
-        shutil.copy2(path, backup)
+    backup = _backup(path)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     with os.fdopen(fd, "w") as fh:
         json.dump(data, fh, indent=2)
@@ -159,12 +170,27 @@ def install(agent: str) -> tuple[Path, Path | None]:
     return path, _save(path, config)
 
 
-def uninstall(agent: str) -> tuple[Path, int]:
+def _only_ours(config: dict, agent: str) -> bool:
+    """True if nothing but observe's own keys is left in a hooks file."""
+    return not {k: v for k, v in config.items() if not (agent == "cursor" and k == "version")}
+
+
+def uninstall(agent: str, dry_run: bool = False) -> tuple[Path, int, bool]:
+    """Remove observe hooks. Returns (config path, hooks removed, file deleted).
+
+    Codex and Cursor keep hooks in a file of their own. If that file is empty after the
+    removal, it is deleted. ~/.claude/settings.json is never deleted.
+    """
     path = config_path(agent)
     if not path.exists():
-        return path, 0
+        return path, 0, False
     config = _load(path)
     removed = strip_hooks(config)
-    if removed:
-        _save(path, config)
-    return path, removed
+    delete = bool(removed) and agent in ("codex", "cursor") and _only_ours(config, agent)
+    if removed and not dry_run:
+        if delete:
+            _backup(path)
+            path.unlink()
+        else:
+            _save(path, config)
+    return path, removed, delete
