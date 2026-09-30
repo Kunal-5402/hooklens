@@ -3,6 +3,8 @@ name = "observe"
 version = "0.1.0"
 description = "Local telemetry for coding agents (Claude Code, Codex): hooks -> SQLite -> session timeline and graph."
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
 dependencies = []
 
