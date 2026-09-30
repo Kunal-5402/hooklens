@@ -13,6 +13,20 @@ What you can see for each session:
 - subagents, prompts, context compactions, and interrupts
 - token usage and model, read from the agent's own transcript (Claude Code and Codex)
 
+## Screenshots
+
+Session overview, with the event list and the commands that ran:
+
+![Session dashboard](assets/session-dashboard19.png)
+
+The graph of tools and the programs they called:
+
+![Session graph](assets/dashboard-graph.png)
+
+The details of one event, with its input and response:
+
+![Event details](assets/event-item.png)
+
 ## Install
 
 ```sh
