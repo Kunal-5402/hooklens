@@ -12,7 +12,7 @@ On a timeline and a graph, on your machine.
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-![hooklens session dashboard](assets/session-dashboard19.png)
+![hooklens session timeline](https://raw.githubusercontent.com/Kunal-5402/hooklens/main/assets/timeline.png)
 
 </div>
 
@@ -83,11 +83,11 @@ skip the question.
 
 The session graph: tools, the programs they ran, and the files they touched.
 
-![Session graph](assets/dashboard-graph.png)
+![Session graph](https://raw.githubusercontent.com/Kunal-5402/hooklens/main/assets/graph.png)
 
 The details of one event, with its input and response.
 
-![Event details](assets/event-item.png)
+![Event details](https://raw.githubusercontent.com/Kunal-5402/hooklens/main/assets/event-details.png)
 
 </details>
 

@@ -58,6 +58,9 @@ function s(tag, attrs = {}, ...children) {
   return node;
 }
 
+// replaceChildren() turns a null argument into the text "null", so drop empty children first.
+const setChildren = (node, ...children) => node.replaceChildren(...children.filter((c) => c != null && c !== false));
+
 const catColor = (c) => `var(--cat-${CATS[c] ? c : "other"})`;
 const swatch = (c) => h("span", { class: "sw", style: `background:${catColor(c)}` });
 
@@ -104,7 +107,8 @@ async function api(path) {
 const tip = document.getElementById("tooltip");
 
 function showTip(evt, title, body, meta, cat) {
-  tip.replaceChildren(
+  setChildren(
+    tip,
     h("div", { class: "t-title" }, cat ? swatch(cat) : null, title),
     body ? h("div", { class: "t-body" }, truncate(body, 400)) : null,
     meta ? h("div", { class: "t-meta" }, meta) : null,
@@ -251,7 +255,7 @@ function renderMain() {
         h("span", { class: "mono", title: "Session id" }, se.id.slice(0, 8)))),
     h("div", { class: "tiles" },
       tile("Active time", fmtDur(activeMs), `wall clock ${fmtDur(wallMs)}`),
-      tile("Tool calls", fmtNum(se.tool_call_count), `${se.prompt_count} prompts`),
+      tile("Tool calls", fmtNum(se.tool_call_count), `${se.prompt_count} prompt${se.prompt_count === 1 ? "" : "s"}`),
       tile("Errors", fmtNum(se.error_count), se.tool_call_count ? `${Math.round((100 * se.error_count) / se.tool_call_count)}% of calls` : null),
       tile("Files changed", fmtNum(summary.files_written_total), `${summary.files_read_total} read`),
       tile("Tokens in", fmtNum(tokensIn), se.cache_read_tokens ? `${fmtNum(se.cache_read_tokens)} from cache` : "from transcript"),
@@ -643,7 +647,8 @@ async function openEvent(id) {
     ["Tool use id", e.tool_use_id],
   ].filter(([, v]) => v != null && v !== "");
   document.getElementById("drawer-title").textContent = e.kind === "tool_call" ? e.tool_name : e.summary || e.kind;
-  document.getElementById("drawer-body").replaceChildren(
+  setChildren(
+    document.getElementById("drawer-body"),
     h("dl", {}, ...rows.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])),
     e.files.length ? h("h3", {}, "Files") : null,
     e.files.length ? pre(e.files.map((f) => `${f.op.padEnd(6)} ${f.path}`).join("\n")) : null,
