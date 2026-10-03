@@ -159,7 +159,7 @@ def _confirm(args, lines: list[str], ask: bool, note: str = "") -> int | None:
 
 
 def _tool_uninstall_hint() -> str:
-    exe = sys.executable
+    exe = sys.executable.replace("\\", "/")
     if "/uv/tools/" in exe:
         return "uv tool uninstall hooklens"
     if "/pipx/" in exe:
