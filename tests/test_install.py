@@ -1,6 +1,6 @@
 import json
 
-from observe import install, paths
+from hooklens import install, paths
 
 
 def test_install_is_idempotent_and_uninstall_keeps_other_hooks():
@@ -18,7 +18,7 @@ def test_install_is_idempotent_and_uninstall_keeps_other_hooks():
     pre = config["hooks"]["PreToolUse"]
     assert pre[0] == other
     assert len(pre) == 2 and pre[1]["matcher"] == "*"
-    assert "-m observe claude hook" in pre[1]["hooks"][0]["command"]
+    assert "-m hooklens claude hook" in pre[1]["hooks"][0]["command"]
     assert set(install.installed_events("claude")) == set(install.EVENTS["claude"])
 
     _, removed, deleted = install.uninstall("claude")
@@ -34,4 +34,4 @@ def test_codex_install_creates_hooks_json():
     assert set(hooks) == set(install.EVENTS["codex"])
     assert hooks["SessionEnd"][0]["hooks"][0]["timeout"] == 3
     _, _, deleted = install.uninstall("codex")
-    assert deleted and not path.exists()  # observe created the file, and it is empty now
+    assert deleted and not path.exists()  # hooklens created the file, and it is empty now

@@ -1,6 +1,6 @@
 """Turn raw hook rows into sessions and events.
 
-Runs lazily (on `observe show`, `observe sessions`, `observe ingest`), never in the hook.
+Runs lazily (on `hooklens show`, `hooklens sessions`, `hooklens ingest`), never in the hook.
 """
 
 import json
@@ -8,9 +8,9 @@ import sqlite3
 import time
 import traceback
 
-from observe import paths, transcripts
-from observe.adapters import classify, excerpt, response_status
-from observe.hook import session_key
+from hooklens import paths, transcripts
+from hooklens.adapters import classify, excerpt, response_status
+from hooklens.hook import session_key
 
 BATCH = 2000
 

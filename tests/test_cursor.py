@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from observe import hook, install, normalize, paths
-from observe.adapters import classify
+from hooklens import hook, install, normalize, paths
+from hooklens.adapters import classify
 
 
 def run_hook(monkeypatch, capsys, agent, payload) -> str:
@@ -95,7 +95,7 @@ def test_cursor_install_uses_the_flat_format():
     assert set(config["hooks"]) == set(install.EVENTS["cursor"])
     assert config["hooks"]["stop"][0] == mine
     assert len(config["hooks"]["stop"]) == 2
-    assert "-m observe cursor hook" in config["hooks"]["postToolUse"][0]["command"]
+    assert "-m hooklens cursor hook" in config["hooks"]["postToolUse"][0]["command"]
     assert not {"preToolUse", "beforeShellExecution", "beforeReadFile"} & set(config["hooks"])
     assert set(install.installed_events("cursor")) == set(install.EVENTS["cursor"])
 

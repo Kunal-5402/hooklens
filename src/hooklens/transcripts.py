@@ -10,7 +10,7 @@ import os
 import sqlite3
 from datetime import datetime
 
-from observe import paths
+from hooklens import paths
 
 
 def _lines(path: str):

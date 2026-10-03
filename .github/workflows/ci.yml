@@ -21,7 +21,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
       - run: uv sync --locked --group dev
       - run: uv run ruff check .
-      - run: node --check src/observe/ui/app.js
+      - run: node --check src/hooklens/ui/app.js
 
   format:
     name: format

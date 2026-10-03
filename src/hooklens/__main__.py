@@ -1,5 +1,5 @@
 import sys
 
-from observe.cli import main
+from hooklens.cli import main
 
 sys.exit(main())
