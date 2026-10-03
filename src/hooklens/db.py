@@ -70,21 +70,6 @@ CREATE INDEX IF NOT EXISTS files_event ON files(event_id);
 """
 
 
-def copy_legacy() -> Path | None:
-    """Copy the database of observe (the old name) if hooklens has none yet. The old file stays."""
-    old, new = paths.legacy_db_path(), paths.db_path()
-    if not old.exists() or new.exists():
-        return None
-    new.parent.mkdir(parents=True, exist_ok=True)
-    src, dst = sqlite3.connect(old), sqlite3.connect(new)
-    try:
-        src.backup(dst)  # a consistent copy, WAL content included
-    finally:
-        src.close()
-        dst.close()
-    return old
-
-
 def connect(path: Path | None = None) -> sqlite3.Connection:
     path = path or paths.db_path()
     path.parent.mkdir(parents=True, exist_ok=True)

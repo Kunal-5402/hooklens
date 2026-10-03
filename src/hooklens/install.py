@@ -62,9 +62,7 @@ EVENTS = {
 TOOL_EVENTS = {"PreToolUse", "PostToolUse", "PostToolUseFailure"}
 # Codex caps these events at 3 seconds.
 SHORT_EVENTS = {"SessionEnd", "Interrupt"}
-# "observe" was the old name of hooklens. Its hooks are found too, so install and uninstall replace them.
-MARKER = re.compile(r"-m (?:hooklens|observe) (claude|codex|cursor) hook\b")
-BACKUP_TAGS = ("hooklens-backup", "observe-backup")
+MARKER = re.compile(r"-m hooklens (claude|codex|cursor) hook\b")
 
 
 def config_path(agent: str) -> Path:
@@ -95,7 +93,7 @@ def _backup(path: Path) -> Path | None:
 def backups(agent: str) -> list[Path]:
     """Config backups that hooklens made for this agent."""
     path = config_path(agent)
-    return sorted(p for tag in BACKUP_TAGS for p in path.parent.glob(f"{path.name}.{tag}-*"))
+    return sorted(path.parent.glob(f"{path.name}.hooklens-backup-*"))
 
 
 def _save(path: Path, data: dict) -> Path | None:

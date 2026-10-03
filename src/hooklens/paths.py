@@ -12,11 +12,6 @@ def db_path() -> Path:
     return home() / "hooklens.db"
 
 
-def legacy_db_path() -> Path:
-    """Database of observe, the old name of hooklens."""
-    return Path.home() / ".observe" / "observe.db"
-
-
 def error_log() -> Path:
     return home() / "errors.log"
 
