@@ -8,7 +8,8 @@ from hooklens import db, hook
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
     """Point every hooklens path at a temp dir, so tests never touch real agent configs."""
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # Path.home()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # Path.home() on macOS and Linux
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))  # Path.home() on Windows
     monkeypatch.setenv("HOOKLENS_HOME", str(tmp_path / "hooklens"))
     monkeypatch.setenv("HOOKLENS_CLAUDE_SETTINGS", str(tmp_path / "claude" / "settings.json"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))

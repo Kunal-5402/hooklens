@@ -69,8 +69,34 @@ def config_path(agent: str) -> Path:
     return {"claude": paths.claude_settings, "codex": paths.codex_hooks, "cursor": paths.cursor_hooks}[agent]()
 
 
+def _short_path(path: str) -> str:
+    """The Windows 8.3 short form of a path (no spaces), or the path itself if there is none."""
+    try:
+        import ctypes
+
+        buf = ctypes.create_unicode_buffer(32768)
+        if ctypes.windll.kernel32.GetShortPathNameW(path, buf, len(buf)):
+            return buf.value
+    except (AttributeError, OSError):  # not Windows, or short names are off on this volume
+        pass
+    return path
+
+
+def python_command(executable: str, windows: bool) -> str:
+    """The interpreter part of the hook command, safe for the shell that runs it.
+
+    On Windows an agent can run the command with bash, cmd, or PowerShell. A path with forward
+    slashes and no spaces runs unquoted in all 3: bash drops backslashes, and PowerShell does not
+    run a quoted path. A space is removed with the short path; quotes are the last resort.
+    """
+    if not windows:
+        return shlex.quote(executable)
+    path = (_short_path(executable) if " " in executable else executable).replace("\\", "/")
+    return f'"{path}"' if " " in path else path
+
+
 def hook_command(agent: str) -> str:
-    return f"{shlex.quote(sys.executable)} -m hooklens {agent} hook"
+    return f"{python_command(sys.executable, os.name == 'nt')} -m hooklens {agent} hook"
 
 
 def _load(path: Path) -> dict:

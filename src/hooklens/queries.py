@@ -1,7 +1,6 @@
 """Read models for the CLI and the UI: session lists, event lists, graph, summary."""
 
 import json
-import os
 import sqlite3
 from collections import Counter, defaultdict
 from urllib.parse import urlparse
@@ -52,14 +51,12 @@ def event_detail(conn: sqlite3.Connection, event_id: int) -> dict | None:
 
 
 def _rel(path: str, cwd: str | None) -> str:
-    if cwd and os.path.isabs(path):
-        try:
-            rel = os.path.relpath(path, cwd)
-        except ValueError:
-            return path
-        if not rel.startswith(".."):
-            return rel
-    return path
+    """Path relative to the session folder, if it is inside it. Works for / and \\ paths on any OS."""
+    if not cwd:
+        return path
+    base = cwd.replace("\\", "/").rstrip("/") + "/"
+    norm = path.replace("\\", "/")
+    return norm[len(base) :] if norm.startswith(base) else path
 
 
 def session_detail(conn: sqlite3.Connection, session_id: str) -> dict | None:
