@@ -74,7 +74,7 @@ is always 0.
 and for some events empty output can block the action. So for Cursor the hook always prints `{}`,
 or `{"continue": true}` for a prompt. It prints this reply even when the database write fails.
 
-**Cursor hooks only observe.** Some Cursor hooks decide if an action may run (`preToolUse`,
+**Cursor hooks only report.** Some Cursor hooks decide if an action may run (`preToolUse`,
 `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile`, `subagentStart`). If `hooklens`
 answered "allow" there, it could skip a question that Cursor would normally ask you. So `hooklens`
 subscribes only to events that report what happened. `postToolUse` carries the duration of the

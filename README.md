@@ -128,11 +128,6 @@ block an action. Read [design/architecture.md](design/architecture.md) for the d
 | `CODEX_HOME` | `~/.codex` | Codex config folder |
 | `HOOKLENS_CURSOR_HOME` | `~/.cursor` | Cursor config folder |
 
-## Upgrading from `observe`
-
-hooklens was called `observe` before. `hooklens install` replaces the old hooks and copies your old
-data from `~/.observe`. Then remove the old command with `uv tool uninstall observe`.
-
 ## Roadmap
 
 See the [milestones](https://github.com/Kunal-5402/hooklens/milestones): the first PyPI release,

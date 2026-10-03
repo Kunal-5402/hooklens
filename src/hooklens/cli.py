@@ -122,12 +122,6 @@ def cmd_install(args) -> int:
         print(f"  command: {install.hook_command(agent)}")
         if backup:
             print(f"  backup: {backup}")
-    from hooklens import db
-
-    if old := db.copy_legacy():
-        print(f"Copied your observe data from {old}. You can delete {old.parent} later.")
-    if shutil.which("observe"):
-        print("The old observe command is still installed. Remove it with: uv tool uninstall observe")
     print("Start a new agent session, then run `hooklens show`.")
     return 0
 
