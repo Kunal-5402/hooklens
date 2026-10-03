@@ -1,4 +1,4 @@
-"""Add and remove observe hooks in the agents' config files.
+"""Add and remove hooklens hooks in the agents' config files.
 
 Claude Code (~/.claude/settings.json) and Codex (~/.codex/hooks.json) nest commands in groups:
     {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "..."}]}]}}
@@ -17,7 +17,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from observe import paths
+from hooklens import paths
 
 EVENTS = {
     "claude": [
@@ -46,8 +46,8 @@ EVENTS = {
         "PostCompact",
         "Interrupt",
     ],
-    # Only events that observe. Cursor lets permission events (preToolUse, beforeShellExecution,
-    # beforeReadFile, ...) block an action, so observe never subscribes to them.
+    # Only events that report what happened. Cursor lets permission events (preToolUse, beforeShellExecution,
+    # beforeReadFile, ...) block an action, so hooklens never subscribes to them.
     "cursor": [
         "sessionStart",
         "sessionEnd",
@@ -62,7 +62,9 @@ EVENTS = {
 TOOL_EVENTS = {"PreToolUse", "PostToolUse", "PostToolUseFailure"}
 # Codex caps these events at 3 seconds.
 SHORT_EVENTS = {"SessionEnd", "Interrupt"}
-MARKER = re.compile(r"-m observe (claude|codex|cursor) hook\b")
+# "observe" was the old name of hooklens. Its hooks are found too, so install and uninstall replace them.
+MARKER = re.compile(r"-m (?:hooklens|observe) (claude|codex|cursor) hook\b")
+BACKUP_TAGS = ("hooklens-backup", "observe-backup")
 
 
 def config_path(agent: str) -> Path:
@@ -70,7 +72,7 @@ def config_path(agent: str) -> Path:
 
 
 def hook_command(agent: str) -> str:
-    return f"{shlex.quote(sys.executable)} -m observe {agent} hook"
+    return f"{shlex.quote(sys.executable)} -m hooklens {agent} hook"
 
 
 def _load(path: Path) -> dict:
@@ -85,15 +87,15 @@ def _load(path: Path) -> dict:
 def _backup(path: Path) -> Path | None:
     if not path.exists():
         return None
-    backup = path.with_name(f"{path.name}.observe-backup-{time.strftime('%Y%m%d-%H%M%S')}")
+    backup = path.with_name(f"{path.name}.hooklens-backup-{time.strftime('%Y%m%d-%H%M%S')}")
     shutil.copy2(path, backup)
     return backup
 
 
 def backups(agent: str) -> list[Path]:
-    """Config backups that observe made for this agent."""
+    """Config backups that hooklens made for this agent."""
     path = config_path(agent)
-    return sorted(path.parent.glob(f"{path.name}.observe-backup-*"))
+    return sorted(p for tag in BACKUP_TAGS for p in path.parent.glob(f"{path.name}.{tag}-*"))
 
 
 def _save(path: Path, data: dict) -> Path | None:
@@ -108,7 +110,7 @@ def _save(path: Path, data: dict) -> Path | None:
 
 
 def strip_hooks(config: dict) -> int:
-    """Remove observe hooks from a config dict in place. Returns how many were removed."""
+    """Remove hooklens hooks from a config dict in place. Returns how many were removed."""
     hooks = config.get("hooks")
     if not isinstance(hooks, dict):
         return 0
@@ -171,12 +173,12 @@ def install(agent: str) -> tuple[Path, Path | None]:
 
 
 def _only_ours(config: dict, agent: str) -> bool:
-    """True if nothing but observe's own keys is left in a hooks file."""
+    """True if nothing but hooklens's own keys is left in a hooks file."""
     return not {k: v for k, v in config.items() if not (agent == "cursor" and k == "version")}
 
 
 def uninstall(agent: str, dry_run: bool = False) -> tuple[Path, int, bool]:
-    """Remove observe hooks. Returns (config path, hooks removed, file deleted).
+    """Remove hooklens hooks. Returns (config path, hooks removed, file deleted).
 
     Codex and Cursor keep hooks in a file of their own. If that file is empty after the
     removal, it is deleted. ~/.claude/settings.json is never deleted.

@@ -1,12 +1,12 @@
-"""observe command line.
+"""hooklens command line.
 
-observe claude install|uninstall|show|sessions     (hook is called by Claude Code)
-observe codex  install|uninstall|show|sessions     (hook is called by Codex)
-observe cursor install|uninstall|show|sessions     (hook is called by Cursor)
-observe <agent> clear                              (delete one agent's recorded sessions)
-observe show | sessions | ingest | doctor
-observe clear                                      (delete all recorded data, keep hooks)
-observe uninstall [--purge]                        (remove hooks; --purge also deletes data)
+hooklens claude install|uninstall|show|sessions     (hook is called by Claude Code)
+hooklens codex  install|uninstall|show|sessions     (hook is called by Codex)
+hooklens cursor install|uninstall|show|sessions     (hook is called by Cursor)
+hooklens <agent> clear                              (delete one agent's recorded sessions)
+hooklens show | sessions | ingest | doctor
+hooklens clear                                      (delete all recorded data, keep hooks)
+hooklens uninstall [--purge]                        (remove hooks; --purge also deletes data)
 """
 
 import argparse
@@ -16,7 +16,7 @@ import sys
 import time
 import webbrowser
 
-from observe import AGENTS, __version__
+from hooklens import AGENTS, __version__
 
 AGENT_NAMES = {"claude": "Claude Code", "codex": "Codex", "cursor": "Cursor"}
 
@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     # Fast path: the agents call this on every tool use.
     if len(argv) == 2 and argv[0] in AGENTS and argv[1] == "hook":
-        from observe import hook
+        from hooklens import hook
 
         return hook.run(argv[0])
 
@@ -35,17 +35,17 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="observe", description="Local telemetry for coding agents.")
-    parser.add_argument("--version", action="version", version=f"observe {__version__}")
+    parser = argparse.ArgumentParser(prog="hooklens", description="Local telemetry for coding agents.")
+    parser.add_argument("--version", action="version", version=f"hooklens {__version__}")
     sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
     for agent in AGENTS:
         ap = sub.add_parser(agent, help=f"{AGENT_NAMES[agent]}: install hooks, show sessions")
         asub = ap.add_subparsers(dest="action", required=True, metavar="<action>")
-        asub.add_parser("install", help=f"add observe hooks to {AGENT_NAMES[agent]}").set_defaults(
+        asub.add_parser("install", help=f"add hooklens hooks to {AGENT_NAMES[agent]}").set_defaults(
             func=cmd_install, agents=[agent]
         )
-        _cleanup_args(asub.add_parser("uninstall", help="remove observe hooks"), purge=True).set_defaults(
+        _cleanup_args(asub.add_parser("uninstall", help="remove hooklens hooks"), purge=True).set_defaults(
             func=cmd_uninstall, agents=[agent], every_agent=False
         )
         _cleanup_args(asub.add_parser("clear", help="delete this agent's recorded sessions")).set_defaults(
@@ -84,7 +84,7 @@ def _show_args(p: argparse.ArgumentParser) -> argparse.ArgumentParser:
 
 def _cleanup_args(p: argparse.ArgumentParser, purge: bool = False) -> argparse.ArgumentParser:
     if purge:
-        p.add_argument("--purge", action="store_true", help="also delete recorded data and observe's config backups")
+        p.add_argument("--purge", action="store_true", help="also delete recorded data and hooklens's config backups")
     p.add_argument("-y", "--yes", action="store_true", help="do not ask for confirmation")
     p.add_argument("--dry-run", action="store_true", help="show what would be removed, change nothing")
     return p
@@ -96,7 +96,7 @@ def _sessions_args(p: argparse.ArgumentParser) -> argparse.ArgumentParser:
 
 
 def _detected(agent: str) -> bool:
-    from observe import paths
+    from hooklens import paths
 
     if agent == "claude":
         return bool(shutil.which("claude")) or paths.claude_settings().parent.is_dir()
@@ -106,11 +106,11 @@ def _detected(agent: str) -> bool:
 
 
 def cmd_install(args) -> int:
-    from observe import install
+    from hooklens import install
 
     agents = args.agents or [a for a in AGENTS if _detected(a)]
     if not agents:
-        print("No agent found. Run `observe <claude|codex|cursor> install`.")
+        print("No agent found. Run `hooklens <claude|codex|cursor> install`.")
         return 1
     for agent in agents:
         try:
@@ -122,19 +122,25 @@ def cmd_install(args) -> int:
         print(f"  command: {install.hook_command(agent)}")
         if backup:
             print(f"  backup: {backup}")
-    print("Start a new agent session, then run `observe show`.")
+    from hooklens import db
+
+    if old := db.copy_legacy():
+        print(f"Copied your observe data from {old}. You can delete {old.parent} later.")
+    if shutil.which("observe"):
+        print("The old observe command is still installed. Remove it with: uv tool uninstall observe")
+    print("Start a new agent session, then run `hooklens show`.")
     return 0
 
 
 def cmd_hook(args) -> int:
-    from observe import hook
+    from hooklens import hook
 
     return hook.run(args.agent)
 
 
 def _confirm(args, lines: list[str], ask: bool, note: str = "") -> int | None:
     """Show what will be removed. Returns None to go on, or an exit code to stop with."""
-    print("observe would remove:" if args.dry_run else "observe will remove:")
+    print("hooklens would remove:" if args.dry_run else "hooklens will remove:")
     for line in lines:
         print(f"  - {line}")
     if note:
@@ -161,21 +167,21 @@ def _confirm(args, lines: list[str], ask: bool, note: str = "") -> int | None:
 def _tool_uninstall_hint() -> str:
     exe = sys.executable
     if "/uv/tools/" in exe:
-        return "uv tool uninstall observe"
+        return "uv tool uninstall hooklens"
     if "/pipx/" in exe:
-        return "pipx uninstall observe"
-    return "pip uninstall observe"
+        return "pipx uninstall hooklens"
+    return "pip uninstall hooklens"
 
 
 def cmd_uninstall(args) -> int:
-    from observe import cleanup, install, paths
+    from hooklens import cleanup, install, paths
 
     lines = []
     for agent in args.agents:
         path, count, delete_file = install.uninstall(agent, dry_run=True)
         if count:
             note = " (then the file is empty, so it is deleted)" if delete_file else ""
-            lines.append(f"{count} observe hook(s) from {path}{note}")
+            lines.append(f"{count} hooklens hook(s) from {path}{note}")
     if args.purge:
         if args.every_agent:
             lines += [f"{p} (recorded data)" for p in cleanup.data_files()]
@@ -183,7 +189,7 @@ def cmd_uninstall(args) -> int:
             n = cleanup.agent_counts(args.agents[0])["sessions"]
             if n:
                 lines.append(f"{n} recorded {AGENT_NAMES[args.agents[0]]} session(s) from {paths.db_path()}")
-        lines += [f"{b} (config backup made by observe)" for a in args.agents for b in install.backups(a)]
+        lines += [f"{b} (config backup made by hooklens)" for a in args.agents for b in install.backups(a)]
     if not lines:
         print("Nothing to remove.")
         return 0
@@ -201,14 +207,14 @@ def cmd_uninstall(args) -> int:
             cleanup.delete_agent_data(args.agents[0])
         for backup in (b for a in args.agents for b in install.backups(a)):  # includes the ones made just now
             backup.unlink(missing_ok=True)
-        print("Deleted recorded data and observe's config backups.")
+        print("Deleted recorded data and hooklens's config backups.")
         if args.every_agent:
-            print(f"To remove the observe command too, run: {_tool_uninstall_hint()}")
+            print(f"To remove the hooklens command too, run: {_tool_uninstall_hint()}")
     return 0
 
 
 def cmd_clear(args) -> int:
-    from observe import cleanup, paths
+    from hooklens import cleanup, paths
 
     if args.agent:
         n = cleanup.agent_counts(args.agent)
@@ -233,7 +239,7 @@ def cmd_clear(args) -> int:
 
 
 def cmd_ingest(args) -> int:
-    from observe import db, normalize
+    from hooklens import db, normalize
 
     conn = db.connect()
     print(f"Processed {normalize.ingest(conn)} raw event(s).")
@@ -256,13 +262,13 @@ def _fmt_num(n: int) -> str:
 
 
 def cmd_sessions(args) -> int:
-    from observe import db, normalize, queries
+    from hooklens import db, normalize, queries
 
     conn = db.connect()
     normalize.ingest(conn)
     rows = queries.list_sessions(conn, args.agent, args.limit)
     if not rows:
-        print("No sessions yet. Install hooks with `observe install`, then use your agent.")
+        print("No sessions yet. Install hooks with `hooklens install`, then use your agent.")
         return 0
     print(
         f"{'STARTED':<17} {'AGENT':<7} {'ID':<9} {'PROJECT':<18} {'TIME':>7} {'TOOLS':>5} {'ERR':>4} "
@@ -282,7 +288,7 @@ def cmd_sessions(args) -> int:
 
 
 def cmd_show(args) -> int:
-    from observe import db, normalize, queries, server
+    from hooklens import db, normalize, queries, server
 
     conn = db.connect()
     normalize.ingest(conn)
@@ -290,7 +296,7 @@ def cmd_show(args) -> int:
     if args.session:
         sid = queries.find_session(conn, args.session)
         if not sid:
-            print(f"No unique session matches '{args.session}'. Run `observe sessions`.", file=sys.stderr)
+            print(f"No unique session matches '{args.session}'. Run `hooklens sessions`.", file=sys.stderr)
             return 1
         fragment = f"#{sid}"
     conn.close()
@@ -298,7 +304,7 @@ def cmd_show(args) -> int:
     httpd = server.make_server(args.port)
     query = f"?agent={args.agent}" if args.agent else ""
     url = f"http://127.0.0.1:{httpd.server_address[1]}/{query}{fragment}"
-    print(f"observe UI: {url}  (Ctrl+C to stop)")
+    print(f"hooklens UI: {url}  (Ctrl+C to stop)")
     if not args.no_open:
         webbrowser.open(url)
     try:
@@ -311,7 +317,7 @@ def cmd_show(args) -> int:
 
 
 def cmd_doctor(args) -> int:
-    from observe import db, install, paths
+    from hooklens import db, install, paths
 
     ok = True
     print(f"Database: {paths.db_path()}")
@@ -325,7 +331,7 @@ def cmd_doctor(args) -> int:
         state = "installed" if events and not missing else "partial" if events else "not installed"
         print(f"{name}: hooks {state} ({install.config_path(agent)})")
         if events and missing:
-            print(f"  missing events: {', '.join(missing)}. Run `observe {agent} install`.")
+            print(f"  missing events: {', '.join(missing)}. Run `hooklens {agent} install`.")
             ok = False
         last = conn.execute("SELECT MAX(received_at) FROM raw_events WHERE agent=?", (agent,)).fetchone()[0]
         if last:

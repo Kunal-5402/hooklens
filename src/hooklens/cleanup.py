@@ -1,14 +1,14 @@
-"""Remove what observe created, and nothing else.
+"""Remove what hooklens created, and nothing else.
 
 Only known file names are deleted. The data folder is removed only if it is empty afterwards,
-so a wrong OBSERVE_HOME cannot delete other files.
+so a wrong HOOKLENS_HOME cannot delete other files.
 """
 
 from pathlib import Path
 
-from observe import db, paths
+from hooklens import db, paths
 
-DATA_FILES = ("observe.db", "observe.db-wal", "observe.db-shm", "errors.log")
+DATA_FILES = ("hooklens.db", "hooklens.db-wal", "hooklens.db-shm", "errors.log")
 
 
 def data_files() -> list[Path]:
@@ -22,7 +22,7 @@ def delete_data() -> list[Path]:
         removed.append(p)
     try:
         paths.home().rmdir()
-    except OSError:  # missing, or it holds files that observe did not create
+    except OSError:  # missing, or it holds files that hooklens did not create
         pass
     return removed
 

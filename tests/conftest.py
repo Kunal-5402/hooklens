@@ -2,16 +2,17 @@ import json
 
 import pytest
 
-from observe import db, hook
+from hooklens import db, hook
 
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
-    """Point every observe path at a temp dir, so tests never touch real agent configs."""
-    monkeypatch.setenv("OBSERVE_HOME", str(tmp_path / "observe"))
-    monkeypatch.setenv("OBSERVE_CLAUDE_SETTINGS", str(tmp_path / "claude" / "settings.json"))
+    """Point every hooklens path at a temp dir, so tests never touch real agent configs."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # Path.home(), for the legacy observe paths
+    monkeypatch.setenv("HOOKLENS_HOME", str(tmp_path / "hooklens"))
+    monkeypatch.setenv("HOOKLENS_CLAUDE_SETTINGS", str(tmp_path / "claude" / "settings.json"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("OBSERVE_CURSOR_HOME", str(tmp_path / "cursor"))
+    monkeypatch.setenv("HOOKLENS_CURSOR_HOME", str(tmp_path / "cursor"))
     return tmp_path
 
 

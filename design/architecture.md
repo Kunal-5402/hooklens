@@ -1,6 +1,6 @@
 # Architecture
 
-`observe` shows you what your coding agent did during a session: which tools it called, which
+`hooklens` shows you what your coding agent did during a session: which tools it called, which
 commands it ran, which files it read and changed, which MCP servers it used, and how many tokens
 it spent. It works with Claude Code, Codex, and Cursor. All data stays on your machine.
 
@@ -8,36 +8,36 @@ For the step-by-step call flow, see [sequence.md](sequence.md).
 
 ## The big picture
 
-`observe` has 3 parts. Each part runs at a different time.
+`hooklens` has 3 parts. Each part runs at a different time.
 
 ```
  1. CAPTURE                    2. NORMALIZE                      3. VIEW
- (inside the agent,            (when you run observe show,       (in your browser)
+ (inside the agent,            (when you run hooklens show,       (in your browser)
   on every event)               sessions, or ingest)
 
- agent ──> observe hook ──>  raw_events ──> normalize ──>  sessions   ──> local server ──> UI
+ agent ──> hooklens hook ──>  raw_events ──> normalize ──>  sessions   ──> local server ──> UI
                              (SQLite)          │           events           (JSON API)
                                                │           files
                              transcripts ──────┘
                              (tokens, model)
 ```
 
-1. **Capture.** The agent runs `observe <agent> hook` on each hook event and sends the event as
+1. **Capture.** The agent runs `hooklens <agent> hook` on each hook event and sends the event as
    JSON on stdin. The hook saves the event as it is, in 1 row of the `raw_events` table, and exits.
-2. **Normalize.** Later, `observe` reads the new raw rows and turns them into clean records:
+2. **Normalize.** Later, `hooklens` reads the new raw rows and turns them into clean records:
    1 row for each session, 1 row for each tool call or prompt, and 1 row for each file touched.
    It also reads the agent's transcript file to get token counts and the model name.
-3. **View.** `observe show` starts a small web server on `127.0.0.1` and opens the UI. The UI
+3. **View.** `hooklens show` starts a small web server on `127.0.0.1` and opens the UI. The UI
    asks the server for JSON and draws the timeline, the graph, and the event table.
 
 ## Components
 
 | File | Job |
 |------|-----|
-| `cli.py` | The `observe` command. Parses arguments and calls the other modules. |
+| `cli.py` | The `hooklens` command. Parses arguments and calls the other modules. |
 | `hook.py` | Runs inside the agent. Reads stdin, trims long strings, inserts 1 raw row. |
 | `install.py` | Adds and removes our hooks in the agent config files. Makes a backup first. |
-| `cleanup.py` | Deletes what observe created (data files, backups), and nothing else. |
+| `cleanup.py` | Deletes what hooklens created (data files, backups), and nothing else. |
 | `db.py` | Opens SQLite (WAL mode) and creates the tables. |
 | `normalize.py` | Turns raw rows into sessions, events, and files. Pairs pre and post tool events. |
 | `adapters.py` | The rules for each agent: maps a tool name to a category, a target, and files. |
@@ -49,7 +49,7 @@ For the step-by-step call flow, see [sequence.md](sequence.md).
 
 ## Data model
 
-All data is in `~/.observe/observe.db`.
+All data is in `~/.hooklens/hooklens.db`.
 
 | Table | One row is | Written by |
 |-------|------------|------------|
@@ -67,7 +67,7 @@ color everywhere.
 **The hook must be fast and silent.** The agent waits for the hook before it continues, so a slow
 hook makes the agent slow. The hook does no parsing: it inserts 1 row and exits in about 30 ms.
 For Claude Code and Codex it never writes to stdout, because they read hook stdout as
-instructions. It never fails the agent: errors go to `~/.observe/errors.log`, and the exit code
+instructions. It never fails the agent: errors go to `~/.hooklens/errors.log`, and the exit code
 is always 0.
 
 **Cursor gets a reply that changes nothing.** Cursor reads hook stdout as JSON on every event,
@@ -75,10 +75,10 @@ and for some events empty output can block the action. So for Cursor the hook al
 or `{"continue": true}` for a prompt. It prints this reply even when the database write fails.
 
 **Cursor hooks only observe.** Some Cursor hooks decide if an action may run (`preToolUse`,
-`beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile`, `subagentStart`). If `observe`
-answered "allow" there, it could skip a question that Cursor would normally ask you. So `observe`
+`beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile`, `subagentStart`). If `hooklens`
+answered "allow" there, it could skip a question that Cursor would normally ask you. So `hooklens`
 subscribes only to events that report what happened. `postToolUse` carries the duration of the
-call, so `observe` can calculate when the call started.
+call, so `hooklens` can calculate when the call started.
 
 **Normalization is lazy.** Parsing happens only when you look at the data. This keeps the hook
 small, and lets us fix a parsing bug and re-process old events without a new capture.
@@ -91,7 +91,7 @@ need to know which agent made an event.
 
 **Tokens come from transcripts.** Hook payloads have no token counts. Each agent writes its own
 transcript file: Claude Code writes `message.usage`, and Codex writes `token_count` events.
-`observe` reads a transcript again only when its modification time changes.
+`hooklens` reads a transcript again only when its modification time changes.
 
 **Local only, no dependencies.** The package uses only the Python standard library. The server
 listens on `127.0.0.1` only. Nothing is sent over the network.

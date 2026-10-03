@@ -175,7 +175,7 @@ function renderEmpty() {
       "div",
       { class: "empty" },
       h("p", {}, "No sessions recorded yet."),
-      h("p", {}, "Run ", h("code", {}, "observe install"), ", then start a new Claude Code or Codex session."),
+      h("p", {}, "Run ", h("code", {}, "hooklens install"), ", then start a new Claude Code or Codex session."),
     ),
   );
 }
