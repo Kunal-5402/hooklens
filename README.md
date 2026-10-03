@@ -1,136 +1,163 @@
-# observe
+<div align="center">
 
-Local telemetry for coding agents. `observe` installs hooks into **Claude Code**, **Codex**, and
-**Cursor**, records every tool call in a local SQLite database, and shows each session as a timeline and a
-graph in your browser. Nothing leaves your machine.
+# hooklens
 
-What you can see for each session:
+**See what your coding agent actually did.**
 
-- every tool call on a timeline, with its duration and status (idle gaps are compressed)
-- the bash commands that ran, and which programs they called
-- the files that the agent read and changed (Codex `apply_patch` included)
-- the MCP servers and tools that the agent called
-- subagents, prompts, context compactions, and interrupts
-- token usage and model, read from the agent's own transcript (Claude Code and Codex)
+Every tool call, shell command, file change, MCP call, and token, from Claude Code, Codex, and Cursor.
+On a timeline and a graph, on your machine.
 
-## Screenshots
+[![CI](https://github.com/Kunal-5402/hooklens/actions/workflows/ci.yml/badge.svg)](https://github.com/Kunal-5402/hooklens/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/hooklens)](https://pypi.org/project/hooklens/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-Session overview, with the event list and the commands that ran:
+![hooklens session dashboard](assets/session-dashboard19.png)
 
-![Session dashboard](assets/session-dashboard19.png)
+</div>
 
-The graph of tools and the programs they called:
+## Why hooklens
+
+Coding agents run commands, edit files, and call tools faster than you can read the transcript.
+hooklens records what happened through the agents' own hooks, so you can answer questions like:
+
+- Which files did the agent change, and which did it only read?
+- What shell commands ran, and which ones failed?
+- Which MCP servers and tools did it use?
+- Where did the time go, and how many tokens did the session cost?
+
+It is a single Python package with **no dependencies**. Data stays in a local SQLite file, and the
+UI is a local web page. **Nothing leaves your machine.**
+
+## Features
+
+- **Timeline** of every tool call, with duration and status. Long idle gaps are compressed.
+- **Graph** of the session: tools, programs, files, MCP servers, and how often each was used.
+- **Event log** with the input and a response excerpt of every call.
+- **Summary** of files changed, files read, commands, and MCP servers.
+- **Tokens and model** from the agent's transcript.
+- **Live view** that updates while the agent works.
+- **One view for three agents.** Claude Code, Codex, and Cursor events are normalized to one schema.
+
+## Supported agents
+
+| Agent | Tool calls | Prompts and turns | Tokens | Hooks file |
+|---|:---:|:---:|:---:|---|
+| Claude Code | ✅ | ✅ | ✅ | `~/.claude/settings.json` |
+| Codex | ✅ | ✅ | ✅ | `~/.codex/hooks.json` |
+| Cursor | ✅ | ✅ | — | `~/.cursor/hooks.json` |
+
+## Quick start
+
+```sh
+uv tool install hooklens        # or: pipx install hooklens
+hooklens install                # add hooks to every agent it finds
+```
+
+Start a **new** agent session (hooks load when a session starts), use the agent, then run:
+
+```sh
+hooklens show                   # opens http://127.0.0.1:7878
+```
+
+To install one agent at a time, use `hooklens claude install`, `hooklens codex install`, or
+`hooklens cursor install`.
+
+## Usage
+
+| Command | What it does |
+|---|---|
+| `hooklens show [session]` | Open the UI for all sessions, or one session |
+| `hooklens <agent> show` | Open the UI for one agent (`claude`, `codex`, `cursor`) |
+| `hooklens sessions` | List recent sessions in the terminal |
+| `hooklens doctor` | Check the hooks, the database, and recent events |
+| `hooklens clear` | Delete all recorded data (the hooks stay) |
+| `hooklens uninstall` | Remove the hooks (your other hooks and settings stay) |
+| `hooklens uninstall --purge` | Remove the hooks, the data, and the config backups |
+
+Commands that delete data ask first. Add `--dry-run` to see what would be removed, or `--yes` to
+skip the question.
+
+<details>
+<summary><b>More screenshots</b></summary>
+
+The session graph: tools, the programs they ran, and the files they touched.
 
 ![Session graph](assets/dashboard-graph.png)
 
-The details of one event, with its input and response:
+The details of one event, with its input and response.
 
 ![Event details](assets/event-item.png)
 
-## Install
-
-```sh
-uv tool install .          # or: pipx install .
-observe install            # adds hooks to every agent it finds
-# or one agent at a time:
-observe claude install
-observe codex install
-observe cursor install
-```
-
-Start a new agent session after install. Hooks load when a session starts.
-
-## Use
-
-```sh
-observe show               # open the UI for all sessions
-observe claude show        # only Claude Code sessions
-observe codex show [id]    # only Codex sessions, optionally open one session
-observe cursor show        # only Cursor sessions
-observe sessions           # list recent sessions in the terminal
-observe doctor             # check hooks, database, and recent events
-```
-
-`observe show` serves the UI on `http://127.0.0.1:7878` (another free port if 7878 is busy).
-The page refreshes every 5 seconds while **Live** is on.
-
-## Remove
-
-```sh
-observe uninstall            # remove the observe hooks; other hooks and settings stay
-observe clear                # delete all recorded sessions; the hooks stay
-observe claude clear         # delete only the Claude Code sessions (also: codex, cursor)
-observe uninstall --purge    # remove the hooks, the recorded data, and observe's config backups
-uv tool uninstall observe    # then remove the command itself (or: pipx uninstall observe)
-```
-
-Add `--dry-run` to see what a command would remove, and `--yes` to skip the question.
-`observe` deletes only the files that it created. It removes only its own entries from agent
-config files. It deletes a Codex or Cursor `hooks.json` only if the file is empty after that, and
-it never deletes `~/.claude/settings.json`.
+</details>
 
 ## How it works
 
-For more detail, read [design/architecture.md](design/architecture.md) and the call flow in
-[design/sequence.md](design/sequence.md).
-
 ```
-agent hook ──stdin JSON──> observe <agent> hook ──> raw_events (SQLite, WAL)
-                                                         │  on show / sessions / ingest
-                                    normalize ───────────┴──> sessions, events, files
-observe show ──> 127.0.0.1 server ──> static UI + JSON API
+agent ──hook event (JSON)──> hooklens hook ──> SQLite (raw events)
+                                                   │
+                         hooklens show ──> normalize ──> sessions, events, files ──> local UI
 ```
 
-- **The hook is fast and silent.** It reads the payload, trims long strings, inserts one row,
-  and exits 0. For Claude Code and Codex it prints nothing, because they read hook stdout as
-  instructions. Cursor needs JSON on stdout, so the hook answers `{}` (or `{"continue": true}`
-  for a prompt), which changes nothing. Failures go to `~/.observe/errors.log`, never to the agent.
-- **Cursor: observe only.** Cursor lets some hooks (`preToolUse`, `beforeShellExecution`,
-  `beforeReadFile`) allow or block an action. `observe` never subscribes to them. It uses
-  `postToolUse`, which carries the call duration, to place each call on the timeline.
-- **Normalization is lazy.** The 3 agents send a similar payload shape, with different tool
-  names and event names. `adapters.py` maps each tool to one of these categories:
-  `bash`, `file_read`, `file_write`, `search`, `mcp`, `web`, `agent`, `other`.
-  Pre and post events are paired by `tool_use_id`.
-- **Tokens come from transcripts.** Hooks carry no token data. `observe` reads the Claude Code
-  transcript (`message.usage`) and the Codex rollout file (`token_count`) when they change.
-- **Codex web search** does not fire hooks, so `observe` reads those calls from the rollout file.
+1. **Capture.** The agent runs `hooklens <agent> hook` on each event. The hook stores the raw
+   event and exits in about 30 ms. It never blocks or changes what the agent does.
+2. **Normalize.** When you open the UI, hooklens maps each agent's events to one schema, pairs tool
+   starts with their results, and reads token usage from the agent's transcript.
+3. **View.** A small server on `127.0.0.1` serves the UI and a JSON API.
 
-Config files that `observe` changes (it writes a timestamped backup first):
+hooklens only uses hooks that report what happened. It never subscribes to hooks that can allow or
+block an action. Read [design/architecture.md](design/architecture.md) for the details and
+[design/sequence.md](design/sequence.md) for the full call flow.
 
-| Agent       | File                      |
-|-------------|---------------------------|
-| Claude Code | `~/.claude/settings.json` |
-| Codex       | `~/.codex/hooks.json`     |
-| Cursor      | `~/.cursor/hooks.json`    |
+## Privacy and safety
 
-## Privacy
+- All data is in `~/.hooklens/hooklens.db`. Nothing is sent over the network.
+- Each string is trimmed to 4096 characters before it is stored, so full file contents and long
+  outputs are not kept. Set `HOOKLENS_MAX_FIELD` to change the limit (`0` keeps everything).
+- Cursor sends your account email with each event. hooklens removes it before storage.
+- hooklens backs up an agent config file before it changes it, and only ever edits its own entries.
+- `hooklens uninstall --purge` removes everything hooklens created, and nothing else.
 
-All data stays in `~/.observe/observe.db`. Each string field is trimmed to 4096 characters
-before it is stored, so large file contents and command output are not kept. Set
-`OBSERVE_MAX_FIELD` in your shell to change the limit (`0` keeps everything).
-Cursor sends your account email with each event; `observe` removes it before it stores the event.
-Run `observe clear` to delete all recorded data.
+## Configuration
 
-## Development
+| Variable | Default | Purpose |
+|---|---|---|
+| `HOOKLENS_HOME` | `~/.hooklens` | Where the database and error log live |
+| `HOOKLENS_MAX_FIELD` | `4096` | Max characters stored per string (`0` = no limit) |
+| `HOOKLENS_CLAUDE_SETTINGS` | `~/.claude/settings.json` | Claude Code settings file |
+| `CODEX_HOME` | `~/.codex` | Codex config folder |
+| `HOOKLENS_CURSOR_HOME` | `~/.cursor` | Cursor config folder |
+
+## Upgrading from `observe`
+
+hooklens was called `observe` before. `hooklens install` replaces the old hooks and copies your old
+data from `~/.observe`. Then remove the old command with `uv tool uninstall observe`.
+
+## Roadmap
+
+See the [milestones](https://github.com/Kunal-5402/hooklens/milestones): the first PyPI release,
+importing past sessions, cost estimates, OpenTelemetry and SIEM export, and policy hooks for
+security tools.
+
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 
 ```sh
-make setup     # create .venv with dev dependencies (needs uv)
-make check     # lint, format check, and tests (the same checks as CI)
-make format    # format the code
-make show      # open the UI from the dev env
-make help      # list every target
+make setup     # create .venv with the dev dependencies (needs uv)
+make check     # lint, format check, and tests: the same checks as CI
 ```
 
-Environment overrides: `OBSERVE_HOME`, `OBSERVE_CLAUDE_SETTINGS`, `CODEX_HOME`, `OBSERVE_CURSOR_HOME`.
+<details>
+<summary><b>Releasing (maintainers)</b></summary>
 
-## Release
-
-1. Set the same version in `pyproject.toml` and `src/observe/__init__.py`, and merge to `main`.
+1. Set the same version in `pyproject.toml` and `src/hooklens/__init__.py`, and merge to `main`.
 2. Publish a GitHub release with a SemVer tag: `v1.2.3`, or `v1.2.3-alpha.1`, `-beta.1`, `-rc.1`.
-3. Approve the `pypi` deployment. The release workflow then checks the tag, runs the tests,
-   builds the package, and publishes it to PyPI.
+3. Approve the `pypi` deployment. The release workflow checks the tag, runs the tests, builds the
+   package, and publishes it to PyPI.
+
+</details>
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+[Apache License 2.0](LICENSE). Copyright 2026 Kunal.
