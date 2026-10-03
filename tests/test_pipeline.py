@@ -1,6 +1,6 @@
 import json
 
-from observe import hook, normalize, queries
+from hooklens import hook, normalize, queries
 
 
 def claude(event, **kw):
@@ -70,7 +70,7 @@ def test_post_before_pre_and_missing_ids(conn, send):
 
 
 def test_hook_truncates_but_keeps_patch_headers(conn, monkeypatch):
-    monkeypatch.setenv("OBSERVE_MAX_FIELD", "100")
+    monkeypatch.setenv("HOOKLENS_MAX_FIELD", "100")
     patch = "*** Begin Patch\n*** Update File: a.py\n" + "+x\n" * 200 + "*** Update File: b.py\n+y\n*** End Patch"
     payload = {
         "session_id": "c2",
@@ -91,4 +91,4 @@ def test_hook_never_raises(monkeypatch, isolated):
     monkeypatch.setattr(hook, "record", lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(hook.sys, "stdin", type("S", (), {"buffer": type("B", (), {"read": lambda self: b"{}"})()})())
     assert hook.run("claude") == 0
-    assert "boom" in (isolated / "observe" / "errors.log").read_text()
+    assert "boom" in (isolated / "hooklens" / "errors.log").read_text()

@@ -6,7 +6,7 @@ import sqlite3
 from collections import Counter, defaultdict
 from urllib.parse import urlparse
 
-from observe.adapters import CATEGORIES, programs
+from hooklens.adapters import CATEGORIES, programs
 
 LEAF_CAP = 30
 HUB_LABELS = {

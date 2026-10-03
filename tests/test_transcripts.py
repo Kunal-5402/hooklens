@@ -1,6 +1,6 @@
 import json
 
-from observe import normalize, transcripts
+from hooklens import normalize, transcripts
 
 
 def write_jsonl(path, rows):

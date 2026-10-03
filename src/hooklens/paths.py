@@ -5,11 +5,16 @@ from pathlib import Path
 
 
 def home() -> Path:
-    return Path(os.environ.get("OBSERVE_HOME") or Path.home() / ".observe")
+    return Path(os.environ.get("HOOKLENS_HOME") or Path.home() / ".hooklens")
 
 
 def db_path() -> Path:
-    return home() / "observe.db"
+    return home() / "hooklens.db"
+
+
+def legacy_db_path() -> Path:
+    """Database of observe, the old name of hooklens."""
+    return Path.home() / ".observe" / "observe.db"
 
 
 def error_log() -> Path:
@@ -17,7 +22,7 @@ def error_log() -> Path:
 
 
 def claude_settings() -> Path:
-    return Path(os.environ.get("OBSERVE_CLAUDE_SETTINGS") or Path.home() / ".claude" / "settings.json")
+    return Path(os.environ.get("HOOKLENS_CLAUDE_SETTINGS") or Path.home() / ".claude" / "settings.json")
 
 
 def codex_home() -> Path:
@@ -33,7 +38,7 @@ def codex_sessions() -> Path:
 
 
 def cursor_home() -> Path:
-    return Path(os.environ.get("OBSERVE_CURSOR_HOME") or Path.home() / ".cursor")
+    return Path(os.environ.get("HOOKLENS_CURSOR_HOME") or Path.home() / ".cursor")
 
 
 def cursor_hooks() -> Path:

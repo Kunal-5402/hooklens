@@ -13,7 +13,7 @@ test: ## Run the test suite
 
 lint: ## Lint Python and check the UI script
 	uv run ruff check .
-	node --check src/observe/ui/app.js
+	node --check src/hooklens/ui/app.js
 
 format: ## Format the code
 	uv run ruff format .
@@ -25,15 +25,15 @@ format-check: ## Check formatting without changes
 check: lint format-check test ## Run every CI check locally
 
 show: ## Open the UI from the dev env
-	uv run observe show
+	uv run hooklens show
 
-install: ## Install the observe command and add hooks to detected agents
+install: ## Install the hooklens command and add hooks to detected agents
 	uv tool install --force .
-	observe install
+	hooklens install
 
-uninstall: ## Remove the hooks, recorded data, and the observe command
-	-observe uninstall --purge
-	uv tool uninstall observe
+uninstall: ## Remove the hooks, recorded data, and the hooklens command
+	-hooklens uninstall --purge
+	uv tool uninstall hooklens
 
 clean: ## Remove build and cache files
 	rm -rf .venv .pytest_cache .ruff_cache dist build
