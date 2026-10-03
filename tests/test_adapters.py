@@ -1,4 +1,4 @@
-from observe.adapters import bash_reads, classify, command_text, programs, response_status
+from hooklens.adapters import bash_reads, classify, command_text, programs, response_status
 
 
 def test_claude_tools():

@@ -35,13 +35,13 @@ jobs:
           VERSION="${TAG#v}"
 
           PKG=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n 1)
-          SRC=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/observe/__init__.py | head -n 1)
+          SRC=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/hooklens/__init__.py | head -n 1)
           if [[ "$PKG" != "$VERSION" ]]; then
             echo "pyproject.toml version '$PKG' does not match tag version '$VERSION'." >&2
             exit 1
           fi
           if [[ "$SRC" != "$VERSION" ]]; then
-            echo "src/observe/__init__.py version '$SRC' does not match tag version '$VERSION'." >&2
+            echo "src/hooklens/__init__.py version '$SRC' does not match tag version '$VERSION'." >&2
             exit 1
           fi
           echo "Tag $TAG matches the package version."

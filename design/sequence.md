@@ -7,17 +7,17 @@ UI. For the parts and the reasons behind them, see [architecture.md](architectur
 sequenceDiagram
     autonumber
     actor User
-    participant CLI as observe CLI
+    participant CLI as hooklens CLI
     participant Config as Agent config file
     participant Agent as Claude Code, Codex, or Cursor
-    participant Hook as observe hook
+    participant Hook as hooklens hook
     participant DB as SQLite database
     participant Transcript as Agent transcript
     participant Server as Local server
     participant Browser
 
     Note over User,Config: 1. Setup, one time
-    User->>CLI: observe install
+    User->>CLI: hooklens install
     CLI->>Config: back up the file, then add hook entries
     CLI-->>User: hooks added
 
@@ -38,7 +38,7 @@ sequenceDiagram
     Hook->>DB: insert raw row
 
     Note over User,Browser: 3. Normalize and view
-    User->>CLI: observe show
+    User->>CLI: hooklens show
     CLI->>DB: read unprocessed raw rows
     CLI->>CLI: classify each tool call and pair Pre with Post by tool_use_id
     CLI->>DB: write sessions, events, and files, then mark raw rows as processed
@@ -65,13 +65,13 @@ sequenceDiagram
 
 ## What each step means
 
-- **Steps 1 to 3.** `observe install` adds 1 hook entry for each event to the agent config
-  file. The command in each entry is `python -m observe <agent> hook`.
+- **Steps 1 to 3.** `hooklens install` adds 1 hook entry for each event to the agent config
+  file. The command in each entry is `python -m hooklens <agent> hook`.
 - **Steps 4 to 15.** The agent calls the hook for each event. The hook only saves the raw JSON.
   It does not parse it, so the agent does not slow down. Cursor sends no Pre event: it sends only
   the Post event, with the call duration. Cursor transcripts have no token usage, so for Cursor
   steps 13 and 20 add no token counts.
-- **Steps 16 to 23.** `observe show` turns the raw rows into sessions, events, and files. Token
+- **Steps 16 to 23.** `hooklens show` turns the raw rows into sessions, events, and files. Token
   counts come from the agent transcript, because hook events do not contain them.
 - **Steps 24 to 34.** The browser gets JSON from the local server. Each request to the session
   list first normalizes any new raw rows, so a running session shows new events.

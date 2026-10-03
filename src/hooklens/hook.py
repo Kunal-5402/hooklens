@@ -12,7 +12,7 @@ import sys
 import time
 import traceback
 
-from observe import db, paths
+from hooklens import db, paths
 
 PATCH_MARK = "*** Begin Patch"
 CURSOR_REPLIES = {"beforeSubmitPrompt": '{"continue": true}'}
@@ -20,7 +20,7 @@ CURSOR_REPLIES = {"beforeSubmitPrompt": '{"continue": true}'}
 
 def max_field() -> int:
     try:
-        return int(os.environ.get("OBSERVE_MAX_FIELD", "4096"))
+        return int(os.environ.get("HOOKLENS_MAX_FIELD", "4096"))
     except ValueError:
         return 4096
 
@@ -34,7 +34,7 @@ def truncate(value, limit: int):
         if PATCH_MARK in value:
             headers = [ln for ln in value.splitlines() if ln.startswith("*** ") and ln not in head]
             head += "\n" + "\n".join(headers)
-        return f"{head}\n…[observe: truncated {len(value) - limit} chars]"
+        return f"{head}\n…[hooklens: truncated {len(value) - limit} chars]"
     if isinstance(value, dict):
         return {k: truncate(v, limit) for k, v in value.items()}
     if isinstance(value, list):
@@ -63,7 +63,7 @@ def record(agent: str, raw: bytes) -> None:
         payload = {"_unparsed": raw.decode(errors="replace")[: limit or None]}
     if not isinstance(payload, dict):
         payload = {"_value": payload}
-    payload.pop("user_email", None)  # Cursor sends it on every event; observe does not need it.
+    payload.pop("user_email", None)  # Cursor sends it on every event; hooklens does not need it.
     payload = truncate(payload, limit)
     conn = db.connect()
     try:

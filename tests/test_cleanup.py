@@ -2,12 +2,12 @@ import json
 
 import pytest
 
-from observe import cli, install, paths
+from hooklens import cli, install, paths
 
 
 @pytest.fixture
 def setup(conn, send):
-    """Hooks for Claude Code and Codex, 1 session each, and files that observe did not create."""
+    """Hooks for Claude Code and Codex, 1 session each, and files that hooklens did not create."""
     settings = paths.claude_settings()
     settings.parent.mkdir(parents=True)
     settings.write_text(json.dumps({"model": "opus"}))
@@ -17,7 +17,7 @@ def setup(conn, send):
     send("claude", {"session_id": "c1", "hook_event_name": "UserPromptSubmit", "prompt": "hi"}, 1.0)
     send("codex", {"session_id": "x1", "hook_event_name": "UserPromptSubmit", "prompt": "hi"}, 2.0)
     assert cli.main(["ingest"]) == 0
-    (paths.home() / "notes.txt").write_text("not observe's")
+    (paths.home() / "notes.txt").write_text("not hooklens's")
     conn.close()
 
 
@@ -27,7 +27,7 @@ def no_terminal(monkeypatch, answer=None):
 
 
 def sessions():
-    from observe import db
+    from hooklens import db
 
     c = db.connect()
     try:
@@ -61,10 +61,10 @@ def test_clear_needs_confirmation(setup, monkeypatch, capsys):
     assert paths.db_path().exists()
 
 
-def test_clear_deletes_only_observe_data(setup):
+def test_clear_deletes_only_hooklens_data(setup):
     assert cli.main(["clear", "--yes"]) == 0
     assert not paths.db_path().exists()
-    assert (paths.home() / "notes.txt").read_text() == "not observe's"
+    assert (paths.home() / "notes.txt").read_text() == "not hooklens's"
     assert set(install.installed_events("claude")) == set(install.EVENTS["claude"])
 
 
@@ -81,7 +81,7 @@ def test_uninstall_keeps_data_and_needs_no_confirmation(setup, monkeypatch):
     assert sessions() == ["claude", "codex"]
 
 
-def test_purge_removes_everything_observe_made_and_nothing_else(setup):
+def test_purge_removes_everything_hooklens_made_and_nothing_else(setup):
     (paths.home() / "notes.txt").unlink()
     claude_dir = paths.claude_settings().parent
 

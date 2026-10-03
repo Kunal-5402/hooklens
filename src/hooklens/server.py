@@ -1,4 +1,4 @@
-"""Local UI server: static files from observe/ui plus a small JSON API. Binds to 127.0.0.1 only."""
+"""Local UI server: static files from hooklens/ui plus a small JSON API. Binds to 127.0.0.1 only."""
 
 import json
 import re
@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from urllib.parse import parse_qs, urlparse
 
-from observe import AGENTS, db, normalize, queries
+from hooklens import AGENTS, db, normalize, queries
 
 STATIC = {
     "/": ("index.html", "text/html"),
@@ -17,7 +17,7 @@ STATIC = {
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "observe"
+    server_version = "hooklens"
 
     def log_message(self, *args) -> None:
         pass
@@ -26,7 +26,7 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if url.path in STATIC:
             name, ctype = STATIC[url.path]
-            body = resources.files("observe").joinpath("ui", name).read_bytes()
+            body = resources.files("hooklens").joinpath("ui", name).read_bytes()
             return self._send(body, f"{ctype}; charset=utf-8")
         conn = db.connect()
         try:
