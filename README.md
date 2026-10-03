@@ -146,7 +146,7 @@ make check     # lint, format check, and tests: the same checks as CI
 <details>
 <summary><b>Releasing (maintainers)</b></summary>
 
-1. Set the same version in `pyproject.toml` and `src/hooklens/__init__.py`, and merge to `main`.
+1. Set `__version__` in `src/hooklens/__init__.py` (the only place with the version), and merge to `main`.
 2. Publish a GitHub release with a SemVer tag: `v1.2.3`, or `v1.2.3-alpha.1`, `-beta.1`, `-rc.1`.
 3. Approve the `pypi` deployment. The release workflow checks the tag, runs the tests, builds the
    package, and publishes it to PyPI.

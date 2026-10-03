@@ -18,7 +18,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check the tag is SemVer and matches the package version
+      - name: Check the tag is SemVer and matches __version__
         shell: bash
         env:
           # Read as an env var, never as ${{ }} inside the script: the tag is user input.
@@ -34,12 +34,8 @@ jobs:
           fi
           VERSION="${TAG#v}"
 
-          PKG=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n 1)
-          SRC=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/hooklens/__init__.py | head -n 1)
-          if [[ "$PKG" != "$VERSION" ]]; then
-            echo "pyproject.toml version '$PKG' does not match tag version '$VERSION'." >&2
-            exit 1
-          fi
+          # The only place with the version. pyproject.toml reads it from here.
+          SRC=$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' src/hooklens/__init__.py | head -n 1)
           if [[ "$SRC" != "$VERSION" ]]; then
             echo "src/hooklens/__init__.py version '$SRC' does not match tag version '$VERSION'." >&2
             exit 1
