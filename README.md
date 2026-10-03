@@ -110,6 +110,13 @@ make help      # list every target
 
 Environment overrides: `OBSERVE_HOME`, `OBSERVE_CLAUDE_SETTINGS`, `CODEX_HOME`, `OBSERVE_CURSOR_HOME`.
 
+## Release
+
+1. Set the same version in `pyproject.toml` and `src/observe/__init__.py`, and merge to `main`.
+2. Publish a GitHub release with a SemVer tag: `v1.2.3`, or `v1.2.3-alpha.1`, `-beta.1`, `-rc.1`.
+3. Approve the `pypi` deployment. The release workflow then checks the tag, runs the tests,
+   builds the package, and publishes it to PyPI.
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

@@ -5,57 +5,52 @@ on:
     types:
       - published
 
-env:
-  RELEASE_NAME: ${{ github.event.release.name }}
+permissions:
+  contents: read
 
 jobs:
   version-check:
+    name: version check
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    outputs:
-      version: ${{ steps.check.outputs.VERSION }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - name: Check release version
-        id: check
+      - name: Check the tag is SemVer and matches the package version
         shell: bash
+        env:
+          # Read as an env var, never as ${{ }} inside the script: the tag is user input.
+          TAG: ${{ github.event.release.tag_name }}
         run: |-
           set -euo pipefail
-          VERSION=$(echo "${{ env.RELEASE_NAME }}" | sed 's/^v//')
-          PATTERN='^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'
-
-          if [[ ! "$VERSION" =~ $PATTERN ]]; then
-            echo "Invalid version: '${{ env.RELEASE_NAME }}'. Use a release name like 0.1.0 or v0.1.0."
+          # vMAJOR.MINOR.PATCH, or a pre-release vMAJOR.MINOR.PATCH-(alpha|beta|rc).N.
+          # Other pre-release labels are not valid Python versions, and PyPI rejects build metadata (+...).
+          PATTERN='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$'
+          if [[ ! "$TAG" =~ $PATTERN ]]; then
+            echo "Tag is not a SemVer release tag: $TAG (use v1.2.3 or v1.2.3-rc.1)" >&2
             exit 1
           fi
+          VERSION="${TAG#v}"
 
           PKG=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n 1)
           SRC=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/observe/__init__.py | head -n 1)
-
           if [[ "$PKG" != "$VERSION" ]]; then
-            echo "pyproject.toml version '$PKG' does not match release '$VERSION'."
+            echo "pyproject.toml version '$PKG' does not match tag version '$VERSION'." >&2
             exit 1
           fi
           if [[ "$SRC" != "$VERSION" ]]; then
-            echo "src/observe/__init__.py version '$SRC' does not match release '$VERSION'."
+            echo "src/observe/__init__.py version '$SRC' does not match tag version '$VERSION'." >&2
             exit 1
           fi
+          echo "Tag $TAG matches the package version."
 
-          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Release version $VERSION matches the package."
-
-  publish-pypi:
+  build:
+    name: build
     needs:
       - version-check
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -74,6 +69,31 @@ jobs:
 
       - name: Build package
         run: uv build
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: publish to PyPI
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    # The pypi environment needs approval from the repo owner before this job runs.
+    environment:
+      name: pypi
+    permissions:
+      # Only this job can publish (trusted publishing). It runs no project code.
+      id-token: write
+    steps:
+      - name: Download package
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@v1.14.2
