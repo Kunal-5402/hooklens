@@ -96,9 +96,9 @@ button { font: inherit; color: inherit; }
 .btn:hover { background: var(--surface-2); }
 .input { width: 100%; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 6px 10px; font: inherit; color: inherit; }
 
-.layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); height: calc(100% - 52px); transition: grid-template-columns .18s ease; }
-.sidebar { border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; gap: 8px; padding: 12px; overflow: hidden; }
-body.sidebar-collapsed .layout { grid-template-columns: 0 minmax(0, 1fr); }
+.layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); height: calc(100% - 52px); transition: grid-template-columns .18s ease; min-width: 0; }
+.sidebar { min-width: 0; border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; gap: 8px; padding: 12px; overflow: hidden; }
+body.sidebar-collapsed .layout { grid-template-columns: minmax(0, 1fr); }
 body.sidebar-collapsed .sidebar { display: none; }
 .session-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
 .session-list li { padding: 8px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 2px; }
@@ -108,7 +108,7 @@ body.sidebar-collapsed .sidebar { display: none; }
 .s-meta { color: var(--muted); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
 .badge { font-size: 11px; padding: 0 6px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--border); }
 
-.main { overflow-y: auto; padding: 20px 24px 48px; }
+.main { min-width: 0; overflow-y: auto; padding: 20px 24px 48px; }
 .empty { color: var(--muted); padding: 48px 0; text-align: center; }
 .empty code { background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
 
@@ -258,7 +258,7 @@ pre { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; marg
   .topbar { gap: 8px; }
   .layout { grid-template-columns: 1fr; height: auto; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--border); max-height: 40vh; }
-  body.sidebar-collapsed .layout { grid-template-columns: 1fr; }
+  body.sidebar-collapsed .layout { grid-template-columns: minmax(0, 1fr); }
   .main { padding: 16px; overflow: visible; }
   .live { display: none; }
   .overview-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -69,8 +69,7 @@ function iconSvg(name, size = 24) {
     timeline: [s("path", { d: "M3 12h4l3-8 4 16 3-8h4" })],
     graph: [s("circle", { cx: 6, cy: 6, r: 2 }), s("circle", { cx: 18, cy: 6, r: 2 }), s("circle", { cx: 12, cy: 18, r: 2 }), s("path", { d: "m7.7 7.1 2.9 8m5.7-8-2.9 8M8 6h8" })],
     events: [s("path", { d: "M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" })],
-    sidebarClose: [s("rect", { x: 3, y: 4, width: 18, height: 16, rx: 2 }), s("path", { d: "M9 4v16m9-11-3 3 3 3" })],
-    sidebarOpen: [s("rect", { x: 3, y: 4, width: 18, height: 16, rx: 2 }), s("path", { d: "M9 4v16m6-11 3 3-3 3" })],
+    sidebar: [s("rect", { x: 3, y: 4, width: 18, height: 16, rx: 2 }), s("path", { d: "M9 4v16" })],
   }[name] || [];
   return s("svg", { class: "icon-svg", width: size, height: size, viewBox: "0 0 24 24", fill: "none",
     stroke: "currentColor", "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, ...shape);
@@ -259,7 +258,11 @@ function renderMain() {
   const tabBar = h("div", { class: "view-tabs", role: "tablist", "aria-label": "Session views" },
     ...tabs.map(([id, label, icon]) => h("button", { class: "view-tab", type: "button", role: "tab",
       id: `tab-${id}`, "aria-controls": "session-view-panel", "aria-selected": String(state.tab === id),
-      tabindex: state.tab === id ? "0" : "-1", onclick: () => { state.tab = id; renderMain(); } },
+      tabindex: state.tab === id ? "0" : "-1", onclick: () => {
+        state.tab = id;
+        renderMain();
+        if (id === "graph") requestAnimationFrame(focusGraphPanel);
+      } },
     iconSvg(icon, 17), h("span", {}, label))));
   const viewPanel = h("div", { id: "session-view-panel", class: "view-panel", role: "tabpanel",
     "aria-labelledby": `tab-${state.tab}` });
@@ -299,6 +302,19 @@ function renderMain() {
     tabBar, viewPanel,
   );
   if (graphHost) renderGraph(graphHost, state.data.graph);
+}
+
+function focusGraphPanel() {
+  const main = document.getElementById("main");
+  const graphCard = main.querySelector(".tab-card");
+  if (!graphCard) return;
+  const mainRect = main.getBoundingClientRect();
+  const cardRect = graphCard.getBoundingClientRect();
+  const targetTop = main.scrollTop + cardRect.top - mainRect.top - main.clientTop - 8;
+  main.scrollTo({
+    top: Math.max(0, targetTop),
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+  });
 }
 
 function sessionSteps(events) {
@@ -364,7 +380,7 @@ const sidebarToggle = document.getElementById("sidebar-toggle");
 function updateSidebarToggle() {
   const collapsed = document.body.classList.contains("sidebar-collapsed");
   const label = collapsed ? "Show sessions sidebar" : "Hide sessions sidebar";
-  sidebarToggle.replaceChildren(iconSvg(collapsed ? "sidebarOpen" : "sidebarClose", 18));
+  sidebarToggle.replaceChildren(iconSvg("sidebar", 18));
   sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
   sidebarToggle.setAttribute("aria-label", label);
   sidebarToggle.title = label;
