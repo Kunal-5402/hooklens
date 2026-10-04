@@ -58,6 +58,24 @@ function s(tag, attrs = {}, ...children) {
   return node;
 }
 
+function iconSvg(name, size = 24) {
+  const shape = {
+    clock: [s("circle", { cx: 12, cy: 12, r: 9 }), s("path", { d: "M12 7v5l3 2" })],
+    bolt: [s("path", { d: "M13 2 4 14h7l-1 8 10-12h-7l1-8Z" })],
+    alert: [s("path", { d: "M10.3 3.9 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" }), s("path", { d: "M12 9v4m0 4h.01" })],
+    file: [s("path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" }), s("path", { d: "M14 2v6h6" })],
+    database: [s("ellipse", { cx: 12, cy: 5, rx: 8, ry: 3 }), s("path", { d: "M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" })],
+    download: [s("path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }), s("path", { d: "m7 10 5 5 5-5M12 15V3" })],
+    timeline: [s("path", { d: "M3 12h4l3-8 4 16 3-8h4" })],
+    graph: [s("circle", { cx: 6, cy: 6, r: 2 }), s("circle", { cx: 18, cy: 6, r: 2 }), s("circle", { cx: 12, cy: 18, r: 2 }), s("path", { d: "m7.7 7.1 2.9 8m5.7-8-2.9 8M8 6h8" })],
+    events: [s("path", { d: "M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" })],
+    sidebarClose: [s("rect", { x: 3, y: 4, width: 18, height: 16, rx: 2 }), s("path", { d: "M9 4v16m9-11-3 3 3 3" })],
+    sidebarOpen: [s("rect", { x: 3, y: 4, width: 18, height: 16, rx: 2 }), s("path", { d: "M9 4v16m6-11 3 3-3 3" })],
+  }[name] || [];
+  return s("svg", { class: "icon-svg", width: size, height: size, viewBox: "0 0 24 24", fill: "none",
+    stroke: "currentColor", "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, ...shape);
+}
+
 // replaceChildren() turns a null argument into the text "null", so drop empty children first.
 const setChildren = (node, ...children) => node.replaceChildren(...children.filter((c) => c != null && c !== false));
 
@@ -225,51 +243,62 @@ function renderMain() {
     .reduce((sum, e) => sum + (e.duration_ms || 0), 0) })).filter((x) => x.ms > 0);
   const activityTotal = activity.reduce((sum, x) => sum + x.ms, 0);
   const tile = (icon, label, value, note, color) => h("div", { class: "overview-tile" },
-    h("span", { class: "tile-icon", style: `--tile-color:${color}`, "aria-hidden": "true" }, icon),
+    h("span", { class: "tile-icon", style: `--tile-color:${color}` }, iconSvg(icon, 28)),
     h("div", { class: "tile-copy" }, h("div", { class: "tile-label" }, label), h("div", { class: "tile-value" }, value),
       note ? h("div", { class: "tile-note" }, note) : null));
   const steps = sessionSteps(events);
   const timeline = h("section", { class: "overview-card timeline-card" },
     h("div", { class: "section-heading" }, h("div", {}, h("h2", {}, "Timeline"),
       h("p", {}, "Key steps from your request to the final response"))), renderSessionSteps(steps));
-  const graphDetails = h("details", { class: "overview-card disclosure" },
-    h("summary", {}, h("span", { class: "disclosure-icon", "aria-hidden": "true" }, "⌘"),
-      h("strong", {}, "Tool graph"), h("span", { class: "disclosure-note" }, "See which tools were used and how they are connected"),
-      h("span", { class: "chevron", "aria-hidden": "true" }, "⌄")), h("div", { class: "disclosure-content graph-content" }));
-  graphDetails.addEventListener("toggle", () => {
-    if (graphDetails.open && !graphDetails.dataset.rendered) {
-      renderGraph(graphDetails.querySelector(".graph-content"), state.data.graph); graphDetails.dataset.rendered = "true";
-    }
-  });
-  const eventDetails = h("details", { class: "overview-card disclosure" },
-    h("summary", {}, h("span", { class: "disclosure-icon", "aria-hidden": "true" }, "☷"),
-      h("strong", {}, `All events (${events.length})`), h("span", { class: "disclosure-note" }, "Detailed list of tool calls, logs and errors"),
-      h("span", { class: "chevron", "aria-hidden": "true" }, "⌄")), h("div", { class: "disclosure-content event-content" }));
-  eventDetails.addEventListener("toggle", () => {
-    if (!eventDetails.open || eventDetails.dataset.rendered) return;
+  let graphHost = null;
+  const tabs = [
+    ["timeline", "Timeline", "timeline"],
+    ["graph", "Tool Graph", "graph"],
+    ["events", "Event Log", "events"],
+  ];
+  const tabBar = h("div", { class: "view-tabs", role: "tablist", "aria-label": "Session views" },
+    ...tabs.map(([id, label, icon]) => h("button", { class: "view-tab", type: "button", role: "tab",
+      id: `tab-${id}`, "aria-controls": "session-view-panel", "aria-selected": String(state.tab === id),
+      tabindex: state.tab === id ? "0" : "-1", onclick: () => { state.tab = id; renderMain(); } },
+    iconSvg(icon, 17), h("span", {}, label))));
+  const viewPanel = h("div", { id: "session-view-panel", class: "view-panel", role: "tabpanel",
+    "aria-labelledby": `tab-${state.tab}` });
+  if (state.tab === "timeline") {
+    viewPanel.append(timeline, renderActivity(activity, activityTotal));
+  } else if (state.tab === "graph") {
+    const graphCard = h("section", { class: "overview-card tab-card" },
+      h("div", { class: "section-heading" }, h("div", {}, h("h2", {}, "Tool graph"),
+        h("p", {}, "See which tools were used and how they are connected"))),
+      h("div", { class: "graph-content" }));
+    graphHost = graphCard.querySelector(".graph-content");
+    viewPanel.append(graphCard);
+  } else {
     const sel = h("select", { class: "input event-filter", "aria-label": "Filter events by category",
-      onchange: (e) => { state.catFilter = e.target.value; renderTable(eventDetails.querySelector(".event-table"), events); } },
-      h("option", { value: "" }, "All categories"), ...ORDER.filter((c) => summary.categories[c])
-        .map((c) => h("option", { value: c }, CATS[c])));
+      onchange: (e) => { state.catFilter = e.target.value; renderMain(); } },
+      h("option", { value: "", selected: !state.catFilter }, "All categories"), ...ORDER.filter((c) => summary.categories[c])
+        .map((c) => h("option", { value: c, selected: state.catFilter === c }, CATS[c])));
     const table = h("div", { class: "event-table" });
-    eventDetails.querySelector(".event-content").append(sel, table); renderTable(table, events);
-    eventDetails.dataset.rendered = "true";
-  });
+    renderTable(table, events);
+    viewPanel.append(h("section", { class: "overview-card tab-card event-log-card" },
+      h("div", { class: "section-heading event-log-heading" }, h("div", {}, h("h2", {}, `Event Log (${events.length})`),
+        h("p", {}, "Detailed list of tool calls, logs and errors")), sel), table));
+  }
 
   document.getElementById("main").replaceChildren(
     h("div", { class: "session-heading" }, h("div", { class: "s-head" },
       h("h1", {}, truncate(se.title, 140) || `Session ${se.id.slice(0, 8)}`),
       h("div", { class: "s-sub" }, h("span", {}, `${fmtDate(se.started_at)} – ${fmtClock(se.ended_at || se.started_at)}`),
         h("span", {}, `${fmtDur(wallMs)} total duration`))),
-      h("button", { class: "btn export-btn", onclick: exportSession }, h("span", { "aria-hidden": "true" }, "⇩"), " Export")),
+      h("button", { class: "btn export-btn", onclick: exportSession }, iconSvg("download", 17), " Export")),
     h("div", { class: "overview-tiles" },
-      tile("◷", "Time spent", fmtDur(wallMs), AGENT_NAMES[se.agent] || se.agent, "#4b9cff"),
-      tile("ϟ", "Actions taken", fmtNum(se.tool_call_count), `${fmtNum(se.prompt_count)} prompt${se.prompt_count === 1 ? "" : "s"}`, "#3bd49d"),
-      tile("⚠", "Errors", fmtNum(se.error_count), se.tool_call_count ? `${Math.round((100 * se.error_count) / se.tool_call_count)}% of actions` : "No tool calls", "#ff5865"),
-      tile("▯", "Files read", fmtNum(summary.files_read_total), `${fmtNum(summary.files_written_total)} files modified`, "#4b9cff"),
-      tile("▤", "Tokens used", fmtNum(tokensTotal), `${cachePct}% of input from cache`, "#b06cff")),
-    timeline, renderActivity(activity, activityTotal), graphDetails, eventDetails,
+      tile("clock", "Time spent", fmtDur(wallMs), AGENT_NAMES[se.agent] || se.agent, "#4b9cff"),
+      tile("bolt", "Actions taken", fmtNum(se.tool_call_count), `${fmtNum(se.prompt_count)} prompt${se.prompt_count === 1 ? "" : "s"}`, "#3bd49d"),
+      tile("alert", "Errors", fmtNum(se.error_count), se.tool_call_count ? `${Math.round((100 * se.error_count) / se.tool_call_count)}% of actions` : "No tool calls", "#ff5865"),
+      tile("file", "Files read", fmtNum(summary.files_read_total), `${fmtNum(summary.files_written_total)} files modified`, "#4b9cff"),
+      tile("database", "Tokens used", fmtNum(tokensTotal), `${cachePct}% from cache`, "#b06cff")),
+    tabBar, viewPanel,
   );
+  if (graphHost) renderGraph(graphHost, state.data.graph);
 }
 
 function sessionSteps(events) {
@@ -331,13 +360,22 @@ function exportSession() {
   document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
 }
 
-function renderPanel(panel) {
-  const { events } = state.data;
-  panel.replaceChildren();
-  if (state.tab === "timeline") renderTimeline(panel, events);
-  else if (state.tab === "graph") renderGraph(panel, state.data.graph);
-  else renderTable(panel, events);
+const sidebarToggle = document.getElementById("sidebar-toggle");
+function updateSidebarToggle() {
+  const collapsed = document.body.classList.contains("sidebar-collapsed");
+  const label = collapsed ? "Show sessions sidebar" : "Hide sessions sidebar";
+  sidebarToggle.replaceChildren(iconSvg(collapsed ? "sidebarOpen" : "sidebarClose", 18));
+  sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+  sidebarToggle.setAttribute("aria-label", label);
+  sidebarToggle.title = label;
 }
+sidebarToggle.addEventListener("click", () => {
+  const collapsed = document.body.classList.toggle("sidebar-collapsed");
+  localStorage.setItem("hooklens-sidebar-collapsed", String(collapsed));
+  updateSidebarToggle();
+});
+if (localStorage.getItem("hooklens-sidebar-collapsed") === "true") document.body.classList.add("sidebar-collapsed");
+updateSidebarToggle();
 
 function legend(cats, ...items) {
   return h("div", { class: "legend" }, ...cats.map((c) => h("span", {}, swatch(c), CATS[c])), ...items);
@@ -748,7 +786,7 @@ window.addEventListener("hashchange", () => { const id = location.hash.slice(1);
 let resizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => state.data && renderPanel(document.getElementById("panel")), 150);
+  resizeTimer = setTimeout(() => state.data && renderMain(), 150);
 });
 
 async function refresh(force) {
