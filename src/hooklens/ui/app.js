@@ -216,60 +216,119 @@ function activeSegments(events) {
 
 function renderMain() {
   const { session: se, events, summary } = state.data;
-  const segs = activeSegments(events);
-  const activeMs = segs.reduce((a, x) => a + (x.end - x.start), 0) * 1000;
   const wallMs = ((se.ended_at || se.started_at) - se.started_at) * 1000;
+  const calls = events.filter((e) => e.kind === "tool_call");
   const tokensIn = se.input_tokens + se.cache_read_tokens + se.cache_write_tokens;
-
-  const tile = (label, value, note) =>
-    h("div", { class: "tile" }, h("div", { class: "tile-label" }, label), h("div", { class: "tile-value" }, value),
-      note ? h("div", { class: "tile-note" }, note) : null);
-
-  const tabs = [["timeline", "Timeline"], ["graph", "Graph"], ["events", "Events"]];
-  const panel = h("div", { class: "panel", id: "panel" });
-
-  const tools = h("div", { class: "tools" });
-  if (state.tab === "timeline") {
-    tools.append(
-      h("div", { class: "seg", role: "group", "aria-label": "Zoom" },
-        ...[1, 2, 4, 8].map((z) =>
-          h("button", { "aria-pressed": String(state.zoom === z), onclick: () => { state.zoom = z; renderMain(); } }, `${z}×`))),
-    );
-  } else if (state.tab === "events") {
-    const sel = h("select", { class: "input", style: "width:auto;padding:3px 8px", "aria-label": "Category",
-      onchange: (e) => { state.catFilter = e.target.value; renderPanel(panel); } },
-      h("option", { value: "" }, "All events"),
-      ...ORDER.filter((c) => summary.categories[c]).map((c) =>
-        h("option", { value: c, selected: state.catFilter === c }, CATS[c])));
-    tools.append(sel);
-  }
+  const tokensTotal = tokensIn + se.output_tokens;
+  const cachePct = tokensIn ? Math.round((100 * se.cache_read_tokens) / tokensIn) : 0;
+  const activity = ORDER.map((cat) => ({ cat, ms: calls.filter((e) => (e.category || "other") === cat)
+    .reduce((sum, e) => sum + (e.duration_ms || 0), 0) })).filter((x) => x.ms > 0);
+  const activityTotal = activity.reduce((sum, x) => sum + x.ms, 0);
+  const tile = (icon, label, value, note, color) => h("div", { class: "overview-tile" },
+    h("span", { class: "tile-icon", style: `--tile-color:${color}`, "aria-hidden": "true" }, icon),
+    h("div", { class: "tile-copy" }, h("div", { class: "tile-label" }, label), h("div", { class: "tile-value" }, value),
+      note ? h("div", { class: "tile-note" }, note) : null));
+  const steps = sessionSteps(events);
+  const timeline = h("section", { class: "overview-card timeline-card" },
+    h("div", { class: "section-heading" }, h("div", {}, h("h2", {}, "Timeline"),
+      h("p", {}, "Key steps from your request to the final response"))), renderSessionSteps(steps));
+  const graphDetails = h("details", { class: "overview-card disclosure" },
+    h("summary", {}, h("span", { class: "disclosure-icon", "aria-hidden": "true" }, "⌘"),
+      h("strong", {}, "Tool graph"), h("span", { class: "disclosure-note" }, "See which tools were used and how they are connected"),
+      h("span", { class: "chevron", "aria-hidden": "true" }, "⌄")), h("div", { class: "disclosure-content graph-content" }));
+  graphDetails.addEventListener("toggle", () => {
+    if (graphDetails.open && !graphDetails.dataset.rendered) {
+      renderGraph(graphDetails.querySelector(".graph-content"), state.data.graph); graphDetails.dataset.rendered = "true";
+    }
+  });
+  const eventDetails = h("details", { class: "overview-card disclosure" },
+    h("summary", {}, h("span", { class: "disclosure-icon", "aria-hidden": "true" }, "☷"),
+      h("strong", {}, `All events (${events.length})`), h("span", { class: "disclosure-note" }, "Detailed list of tool calls, logs and errors"),
+      h("span", { class: "chevron", "aria-hidden": "true" }, "⌄")), h("div", { class: "disclosure-content event-content" }));
+  eventDetails.addEventListener("toggle", () => {
+    if (!eventDetails.open || eventDetails.dataset.rendered) return;
+    const sel = h("select", { class: "input event-filter", "aria-label": "Filter events by category",
+      onchange: (e) => { state.catFilter = e.target.value; renderTable(eventDetails.querySelector(".event-table"), events); } },
+      h("option", { value: "" }, "All categories"), ...ORDER.filter((c) => summary.categories[c])
+        .map((c) => h("option", { value: c }, CATS[c])));
+    const table = h("div", { class: "event-table" });
+    eventDetails.querySelector(".event-content").append(sel, table); renderTable(table, events);
+    eventDetails.dataset.rendered = "true";
+  });
 
   document.getElementById("main").replaceChildren(
-    h("div", { class: "s-head" },
+    h("div", { class: "session-heading" }, h("div", { class: "s-head" },
       h("h1", {}, truncate(se.title, 140) || `Session ${se.id.slice(0, 8)}`),
-      h("div", { class: "s-sub" },
-        h("span", { class: "badge" }, AGENT_NAMES[se.agent] || se.agent),
-        se.model ? h("span", {}, se.model) : null,
-        h("span", {}, fmtDate(se.started_at)),
-        se.cwd ? h("span", { class: "mono", title: se.cwd }, se.cwd) : null,
-        h("span", { class: "mono", title: "Session id" }, se.id.slice(0, 8)))),
-    h("div", { class: "tiles" },
-      tile("Active time", fmtDur(activeMs), `wall clock ${fmtDur(wallMs)}`),
-      tile("Tool calls", fmtNum(se.tool_call_count), `${se.prompt_count} prompt${se.prompt_count === 1 ? "" : "s"}`),
-      tile("Errors", fmtNum(se.error_count), se.tool_call_count ? `${Math.round((100 * se.error_count) / se.tool_call_count)}% of calls` : null),
-      tile("Files changed", fmtNum(summary.files_written_total), `${summary.files_read_total} read`),
-      tile("Tokens in", fmtNum(tokensIn), se.cache_read_tokens ? `${fmtNum(se.cache_read_tokens)} from cache` : "from transcript"),
-      tile("Tokens out", fmtNum(se.output_tokens), null)),
-    h("div", { class: "card" },
-      h("div", { class: "tabs", role: "tablist" },
-        ...tabs.map(([key, label]) =>
-          h("button", { role: "tab", "aria-selected": String(state.tab === key),
-            onclick: () => { state.tab = key; renderMain(); } }, label)),
-        tools),
-      panel),
-    renderSummary(summary),
+      h("div", { class: "s-sub" }, h("span", {}, `${fmtDate(se.started_at)} – ${fmtClock(se.ended_at || se.started_at)}`),
+        h("span", {}, `${fmtDur(wallMs)} total duration`))),
+      h("button", { class: "btn export-btn", onclick: exportSession }, h("span", { "aria-hidden": "true" }, "⇩"), " Export")),
+    h("div", { class: "overview-tiles" },
+      tile("◷", "Time spent", fmtDur(wallMs), AGENT_NAMES[se.agent] || se.agent, "#4b9cff"),
+      tile("ϟ", "Actions taken", fmtNum(se.tool_call_count), `${fmtNum(se.prompt_count)} prompt${se.prompt_count === 1 ? "" : "s"}`, "#3bd49d"),
+      tile("⚠", "Errors", fmtNum(se.error_count), se.tool_call_count ? `${Math.round((100 * se.error_count) / se.tool_call_count)}% of actions` : "No tool calls", "#ff5865"),
+      tile("▯", "Files read", fmtNum(summary.files_read_total), `${fmtNum(summary.files_written_total)} files modified`, "#4b9cff"),
+      tile("▤", "Tokens used", fmtNum(tokensTotal), `${cachePct}% of input from cache`, "#b06cff")),
+    timeline, renderActivity(activity, activityTotal), graphDetails, eventDetails,
   );
-  renderPanel(panel);
+}
+
+function sessionSteps(events) {
+  const sorted = [...events].sort((a, b) => a.started_at - b.started_at || a.id - b.id);
+  const prompts = sorted.filter((e) => e.kind === "prompt");
+  if (!prompts.length) return sorted.length ? [{ title: "Session activity", events: sorted }] : [];
+  const groups = prompts.map((prompt) => ({ title: prompt.summary || "Prompt received", events: [prompt] }));
+  for (const event of sorted) {
+    if (event.kind === "prompt") continue;
+    let index = -1;
+    for (let i = 0; i < prompts.length; i++) if (prompts[i].started_at <= event.started_at) index = i;
+    groups[Math.max(0, index)].events.push(event);
+  }
+  return groups.map((group) => {
+    const calls = group.events.filter((e) => e.kind === "tool_call");
+    const errors = calls.filter((e) => e.status === "error").length;
+    const cats = [...new Set(calls.map((e) => CATS[e.category] || "Other"))];
+    const descriptions = calls.slice(0, 3).map((e) => e.summary || e.tool_name).filter(Boolean);
+    const first = group.events[0];
+    const last = group.events.reduce((a, e) => Math.max(a, e.ended_at || e.started_at), first.started_at);
+    return { ...group, calls, errors, cats, descriptions, started_at: first.started_at, ended_at: last };
+  });
+}
+
+function renderSessionSteps(steps) {
+  if (!steps.length) return h("div", { class: "overview-empty" }, "No events recorded for this session.");
+  return h("div", { class: "step-list" }, ...steps.map((step) => h("details", { class: "step-row" },
+    h("summary", {}, h("time", {}, fmtClock(step.started_at)),
+      h("span", { class: `step-marker${step.errors ? " has-error" : ""}`, "aria-hidden": "true" }, step.errors ? "!" : "✓"),
+      h("span", { class: "step-copy" }, h("strong", {}, truncate(step.title, 72)),
+        h("span", {}, step.calls.length ? `${step.calls.length} tool calls · ${fmtDur((step.ended_at - step.started_at) * 1000)}` : "Prompt received")),
+      h("span", { class: "step-count" }, step.calls.length ? `${step.calls.length} actions` : "1 prompt"),
+      step.errors ? h("span", { class: "step-error" }, `${step.errors} error${step.errors === 1 ? "" : "s"}`) : null,
+      h("span", { class: "chevron", "aria-hidden": "true" }, "⌄")),
+    h("div", { class: "step-detail" }, h("p", {}, step.descriptions.length ? step.descriptions.join(" · ") : "No tool calls in this step."),
+      step.cats.length ? h("div", { class: "step-tags" }, ...step.cats.map((cat) => h("span", {}, cat))) : null))));
+}
+
+function renderActivity(activity, total) {
+  const color = (cat) => getComputedStyle(document.documentElement).getPropertyValue(`--cat-${cat}`).trim() || "#8b95a5";
+  const segments = activity.map((x) => h("span", { class: "activity-segment",
+    style: `width:${(100 * x.ms) / (total || 1)}%;background:${color(x.cat)}`, title: `${CATS[x.cat]} ${fmtDur(x.ms)}` }));
+  const legendItems = activity.map((x) => h("div", { class: "activity-item" },
+    h("span", { class: "activity-dot", style: `background:${color(x.cat)}` }), h("span", {}, CATS[x.cat]),
+    h("span", { class: "activity-value" }, `${fmtDur(x.ms)} (${total ? Math.round((100 * x.ms) / total) : 0}%)`)));
+  return h("section", { class: "overview-card activity-card" },
+    h("div", { class: "section-heading" }, h("div", {}, h("h2", {}, "Time spent by activity"),
+      h("p", {}, "Share of recorded tool-call duration"))),
+    total ? h("div", { class: "activity-bar", role: "img", "aria-label": "Recorded tool duration by activity" }, ...segments)
+      : h("div", { class: "overview-empty" }, "No tool-call durations recorded."),
+    legendItems.length ? h("div", { class: "activity-legend" }, ...legendItems) : null);
+}
+
+function exportSession() {
+  const blob = new Blob([JSON.stringify({ ...state.data, exported_at: new Date().toISOString() }, null, 2)],
+    { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = h("a", { href: url, download: `hooklens-session-${state.data.session.id.slice(0, 8)}.json` });
+  document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
 }
 
 function renderPanel(panel) {
@@ -586,7 +645,7 @@ function renderTable(host, events) {
   const rows = events.filter((e) => !state.catFilter || e.category === state.catFilter);
   const kindLabel = { prompt: "Prompt", session_start: "Session", session_end: "Session", stop: "Turn end",
     subagent: "Subagent", compact: "Compaction", notification: "Notification", interrupt: "Interrupt", permission: "Permission" };
-  host.append(
+  host.replaceChildren(
     h("div", { class: "table-wrap" },
       h("table", {},
         h("thead", {}, h("tr", {}, ...["Time", "+", "Type", "Tool", "Target", "Duration", "Status"].map((t) => h("th", {}, t)))),
