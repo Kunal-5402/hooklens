@@ -28,7 +28,7 @@ For the step-by-step call flow, see [sequence.md](sequence.md).
    1 row for each session, 1 row for each tool call or prompt, and 1 row for each file touched.
    It also reads the agent's transcript file to get token counts and the model name.
 3. **View.** `hooklens show` starts a small web server on `127.0.0.1` and opens the UI. The UI
-   asks the server for JSON and draws the timeline, the graph, and the event table.
+   asks the server for JSON and draws the trace, the tools and files view, and the event table.
 
 ## Components
 
@@ -42,7 +42,7 @@ For the step-by-step call flow, see [sequence.md](sequence.md).
 | `normalize.py` | Turns raw rows into sessions, events, and files. Pairs pre and post tool events. |
 | `adapters.py` | The rules for each agent: maps a tool name to a category, a target, and files. |
 | `transcripts.py` | Reads Claude Code transcripts and Codex rollout files for tokens and model. |
-| `queries.py` | Builds what the CLI and UI show: session lists, summaries, and the graph. |
+| `queries.py` | Builds what the CLI and UI show: session lists, events, files, and summaries. |
 | `server.py` | Serves the UI files and the JSON API. |
 | `ui/` | The web page: plain HTML, CSS, and JavaScript. No build step. No external libraries. |
 | `paths.py` | Where files live. Every path can be changed with an environment variable. |
@@ -59,8 +59,7 @@ All data is in `~/.hooklens/hooklens.db`.
 | `files` | 1 file that a tool call read, wrote, or deleted | normalize |
 
 Each tool call has a **category**: `bash`, `file_read`, `file_write`, `search`, `mcp`, `web`,
-`agent`, or `other`. The category sets the lane on the timeline, the hub in the graph, and the
-color everywhere.
+`agent`, or `other`. The category sets the color of the tool call everywhere in the UI.
 
 ## Design decisions
 
@@ -100,9 +99,10 @@ listens on `127.0.0.1` only. Nothing is sent over the network.
 stored. File contents and long command output are not kept. For a Codex patch, the lines with
 file names are kept, so we still know every file the patch changed.
 
-**The timeline compresses idle time.** A tool call can wait hours for your answer. If the
-timeline showed real time, all other calls would be too thin to see. Gaps of more than 60 seconds
-with no events become thin breaks.
+**The trace compresses idle time.** A session can wait hours or days for your answer. If the
+trace showed real time, all other calls would be too thin to see. A gap of more than 5 minutes
+with no events counts as idle: it becomes a thin break in the trace, and it is not part of the
+active time.
 
 ## Differences between the agents
 
