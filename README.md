@@ -5,14 +5,14 @@
 **See what your coding agent actually did.**
 
 Every tool call, shell command, file change, MCP call, and token, from Claude Code, Codex, and Cursor.
-On a timeline and a graph, on your machine.
+As a trace of every turn, on your machine.
 
 [![CI](https://github.com/Kunal-5402/hooklens/actions/workflows/ci.yml/badge.svg)](https://github.com/Kunal-5402/hooklens/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/hooklens?cacheSeconds=3600)](https://pypi.org/project/hooklens/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-![Hooklens session dashboard with the Tool Graph in focus](assets/timeline.png)
+![Hooklens session trace: a turn with its tool calls, and the details of a failed test run](assets/trace.png)
 
 </div>
 
@@ -31,10 +31,12 @@ UI is a local web page. **Nothing leaves your machine.**
 
 ## Features
 
-- **Timeline** of every tool call, with duration and status. Long idle gaps are compressed.
-- **Graph** of the session: tools, programs, files, MCP servers, and how often each was used.
-- **Event log** with the input and a response excerpt of every call.
-- **Summary** of files changed, files read, commands, and MCP servers.
+- **Trace** of each turn: the prompt, then every tool call on a time axis, with duration and status.
+  Idle gaps are compressed, and active time is counted apart from idle time.
+- **Details** of each call: the input, the error, a response excerpt, and the files it touched.
+- **Tools and files**: time by activity, calls and p95 duration for each tool, every file changed
+  or read, and the commands that ran.
+- **Event log** with search, a category filter, and an errors-only filter.
 - **Tokens and model** from the agent's transcript.
 - **Live view** that updates while the agent works.
 - **One view for three agents.** Claude Code, Codex, and Cursor events are normalized to one schema.
@@ -81,13 +83,9 @@ skip the question.
 <details>
 <summary><b>More screenshots</b></summary>
 
-The session graph: tools, the programs they ran, and the files they touched.
+Tools and files: where the time went, each tool's calls and durations, and the files that changed.
 
-![Session graph](https://raw.githubusercontent.com/Kunal-5402/hooklens/main/assets/graph.png)
-
-The details of one event, with its input and response.
-
-![Event details](https://raw.githubusercontent.com/Kunal-5402/hooklens/main/assets/event-details.png)
+![Tools and files](https://raw.githubusercontent.com/Kunal-5402/hooklens/main/assets/tools.png)
 
 </details>
 

@@ -1,6 +1,6 @@
 "use strict";
 
-// Category order is fixed: it sets lane order and the color slot of each category.
+// Category order is fixed: it sets the color slot of each category.
 const CATS = {
   bash: "Bash",
   file_write: "File writes",
@@ -13,23 +13,42 @@ const CATS = {
 };
 const ORDER = Object.keys(CATS);
 const AGENT_NAMES = { claude: "Claude Code", codex: "Codex", cursor: "Cursor" };
-const STATUS = {
-  ok: ["✓", "OK"],
-  error: ["!", "Error"],
-  running: ["…", "No result"],
-  interrupted: ["–", "Interrupted"],
+const AGENT_SHORT = { claude: "Claude", codex: "Codex", cursor: "Cursor" };
+const STATUS = { ok: "OK", error: "Error", running: "No result", interrupted: "Interrupted" };
+const KIND_LABELS = {
+  prompt: "Prompt",
+  stop: "Turn end",
+  session_start: "Session start",
+  session_end: "Session end",
+  subagent: "Subagent finished",
+  compact: "Context compacted",
+  notification: "Notification",
+  interrupt: "Interrupted",
+  permission: "Permission request",
 };
+// A gap between events longer than this is idle time: it does not count as active time,
+// and the trace draws it as a short break, so one long wait does not flatten everything else.
+const IDLE_GAP = 300;
+const TABS = { trace: "Trace", tools: "Tools & files", events: "Events" };
+const OLD_TABS = { timeline: "trace", graph: "tools" };
 const SVG_NS = "http://www.w3.org/2000/svg";
 
+const params = new URLSearchParams(location.search);
 const state = {
-  agent: new URLSearchParams(location.search).get("agent") || "",
+  agent: params.get("agent") || "",
   sessions: [],
   current: null,
   data: null,
-  tab: ["timeline", "graph", "events"].includes(new URLSearchParams(location.search).get("tab"))
-    ? new URLSearchParams(location.search).get("tab") : "timeline",
-  zoom: 1,
+  turns: [],
+  tab: TABS[params.get("tab")] ? params.get("tab") : OLD_TABS[params.get("tab")] || "trace",
+  open: new Set(), // keys of the expanded turns
+  selected: null, // "turn:<n>" or "event:<id>"
+  detail: null, // rendered detail of the selected event
+  prompts: new Map(), // full prompt text by event id
   catFilter: "",
+  errorsOnly: false,
+  query: "",
+  showEmpty: false,
 };
 
 // ---------- small helpers ----------
@@ -49,27 +68,16 @@ function h(tag, attrs = {}, ...children) {
 
 function s(tag, attrs = {}, ...children) {
   const node = document.createElementNS(SVG_NS, tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v == null) continue;
-    if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v);
-  }
-  for (const c of children.flat()) if (c != null) node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  for (const [k, v] of Object.entries(attrs)) if (v != null) node.setAttribute(k, v);
+  for (const c of children) node.append(c);
   return node;
 }
 
 function iconSvg(name, size = 24) {
   const shape = {
-    clock: [s("circle", { cx: 12, cy: 12, r: 9 }), s("path", { d: "M12 7v5l3 2" })],
-    bolt: [s("path", { d: "M13 2 4 14h7l-1 8 10-12h-7l1-8Z" })],
-    alert: [s("path", { d: "M10.3 3.9 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" }), s("path", { d: "M12 9v4m0 4h.01" })],
-    file: [s("path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" }), s("path", { d: "M14 2v6h6" })],
-    database: [s("ellipse", { cx: 12, cy: 5, rx: 8, ry: 3 }), s("path", { d: "M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" })],
     download: [s("path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }), s("path", { d: "m7 10 5 5 5-5M12 15V3" })],
-    timeline: [s("path", { d: "M3 12h4l3-8 4 16 3-8h4" })],
-    graph: [s("circle", { cx: 6, cy: 6, r: 2 }), s("circle", { cx: 18, cy: 6, r: 2 }), s("circle", { cx: 12, cy: 18, r: 2 }), s("path", { d: "m7.7 7.1 2.9 8m5.7-8-2.9 8M8 6h8" })],
-    events: [s("path", { d: "M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" })],
     sidebar: [s("rect", { x: 3, y: 4, width: 18, height: 16, rx: 2 }), s("path", { d: "M9 4v16" })],
+    chevron: [s("path", { d: "m9 6 6 6-6 6" })],
   }[name] || [];
   return s("svg", { class: "icon-svg", width: size, height: size, viewBox: "0 0 24 24", fill: "none",
     stroke: "currentColor", "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, ...shape);
@@ -99,24 +107,142 @@ function fmtNum(n) {
   return n.toLocaleString();
 }
 
-const fmtClock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-const fmtDate = (t) => new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const plural = (n, word) => `${fmtNum(n)} ${word}${n === 1 ? "" : "s"}`;
+const toDate = (t) => new Date(t * 1000);
+const fmtTime = (t) => toDate(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const fmtClock = (t) => toDate(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const fmtDate = (t) => toDate(t).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const fmtDateSec = (t) => `${toDate(t).toLocaleDateString([], { month: "short", day: "numeric" })}, ${fmtClock(t)}`;
+const dayKey = (t) => toDate(t).toDateString();
 
-function relTime(t) {
-  const d = Date.now() / 1000 - t;
-  if (d < 60) return "just now";
-  if (d < 3600) return `${Math.floor(d / 60)}m ago`;
-  if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
-  return fmtDate(t);
+function fmtDay(t) {
+  const days = Math.round((new Date(new Date().toDateString()) - new Date(dayKey(t))) / 864e5);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return toDate(t).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
 }
 
-const basename = (p) => (p || "").split("/").filter(Boolean).pop() || p || "";
+const basename = (p) => (p || "").split(/[\\/]/).filter(Boolean).pop() || p || "";
 const truncate = (str, n) => (str && str.length > n ? str.slice(0, n - 1) + "…" : str || "");
+const firstLine = (str) => {
+  const lines = (str || "").trim().split("\n");
+  return lines.length > 1 ? `${lines[0]} …` : lines[0];
+};
+
+// Show paths inside the session folder relative to it, also inside commands.
+function shorten(text, cwd) {
+  if (!text || !cwd) return text || "";
+  const base = cwd.replace(/[\\/]+$/, "");
+  if (text === base) return ".";
+  return text.split(`${base}/`).join("").split(`${base}\\`).join("");
+}
+
+// mcp__server__tool -> server · tool
+const prettyTool = (name) => (name && name.startsWith("mcp__") ? name.slice(5).split("__").join(" · ") : name || "");
+
+// Prompts can hold markup that the agent adds: task notifications, slash commands, pasted text.
+function cleanPrompt(text) {
+  const raw = text || "";
+  if (raw.includes("<task-notification>")) {
+    const m = /<summary>([\s\S]*?)(<\/summary>|$)/.exec(raw);
+    const status = /<status>([^<]*)<\/status>/.exec(raw);
+    const title = m && m[1].trim() ? m[1].trim() + (m[2] ? "" : "…") : `Background task ${status ? status[1] : "update"}`;
+    return { title, system: true };
+  }
+  const cmd = /<command-name>([^<]*)<\/command-name>/.exec(raw);
+  if (cmd) {
+    const args = /<command-args>([^<]*)/.exec(raw);
+    return { title: `${cmd[1]} ${args ? args[1] : ""}`.trim(), system: false };
+  }
+  const title = raw
+    .replace(/<(system-reminder|ide_selection|ide_opened_file)>[\s\S]*?(<\/\1>|$)/g, " ")
+    .replace(/<pasted_content[^>]*>[\s\S]*?(<\/pasted_content[^>]*>|$)/g, " [pasted text] ")
+    .replace(/<\/?[a-z][\w-]*(\s[^>]*)?>/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return { title: title || "Prompt", system: false };
+}
+
+const sessionTitle = (x) => (x.title ? cleanPrompt(x.title).title : `Session ${x.id.slice(0, 8)}`);
+const isEmptySession = (x) => !x.tool_call_count && !x.prompt_count;
+const wide = () => matchMedia("(min-width: 1100px)").matches;
 
 async function api(path) {
   const res = await fetch(path);
   if (!res.ok) throw new Error(`${res.status} ${path}`);
   return res.json();
+}
+
+// ---------- time ----------
+
+const eventPoints = (events) => events.flatMap((e) => (e.ended_at != null ? [e.started_at, e.ended_at] : [e.started_at]));
+
+// Group time points that are at most IDLE_GAP seconds apart.
+function segments(points) {
+  const segs = [];
+  for (const t of [...points].sort((a, b) => a - b)) {
+    const last = segs[segs.length - 1];
+    if (last && t - last.end <= IDLE_GAP) last.end = t;
+    else segs.push({ start: t, end: t });
+  }
+  return segs;
+}
+
+const activeMs = (segs) => segs.reduce((sum, g) => sum + (g.end - g.start), 0) * 1000;
+
+// Map a time to 0..1 across the segments, with a short fixed break for each idle gap.
+function timeScale(segs) {
+  const GAP = 0.025;
+  const total = segs.reduce((a, g) => a + (g.end - g.start), 0);
+  const avail = 1 - GAP * (segs.length - 1);
+  const k = total > 0 ? avail / total : 0;
+  let cursor = 0;
+  const parts = segs.map((g) => {
+    const x0 = cursor;
+    const x1 = x0 + (k ? (g.end - g.start) * k : avail / segs.length);
+    cursor = x1 + GAP;
+    return { ...g, x0, x1 };
+  });
+  const at = (t) => {
+    for (let i = 0; i < parts.length; i++) {
+      const g = parts[i];
+      if (t <= g.end) {
+        if (t >= g.start || i === 0) return g.x0 + Math.max(0, t - g.start) * k;
+        const p = parts[i - 1]; // t is inside an idle gap: spread it over the break
+        return p.x1 + ((t - p.end) / (g.start - p.end)) * (g.x0 - p.x1);
+      }
+    }
+    return 1;
+  };
+  const gaps = parts.slice(1).map((g, i) => ({ x: (parts[i].x1 + g.x0) / 2, ms: (g.start - parts[i].end) * 1000 }));
+  return { at, gaps };
+}
+
+// ---------- turns ----------
+
+// A turn is one prompt and everything the agent did until the next prompt.
+function buildTurns(events) {
+  const sorted = [...events].sort((a, b) => a.started_at - b.started_at || a.id - b.id);
+  const turns = [];
+  let turn = null;
+  for (const e of sorted) {
+    if (e.kind === "prompt") {
+      turn = { prompt: e, ...cleanPrompt(e.summary), events: [e] };
+      turns.push(turn);
+    } else if (e.kind !== "session_start" && e.kind !== "session_end") {
+      if (!turn) turns.push((turn = { prompt: null, title: "Before the first prompt", system: true, events: [] }));
+      turn.events.push(e);
+    }
+  }
+  return turns.map((t, i) => {
+    const calls = t.events.filter((e) => e.kind === "tool_call");
+    const points = eventPoints(t.events);
+    const segs = segments(points);
+    const start = Math.min(...points);
+    const end = Math.max(...points);
+    return { ...t, index: i + 1, key: `turn:${i}`, calls, segs, start, end,
+      errors: calls.filter((e) => e.status === "error").length, active: activeMs(segs), wall: (end - start) * 1000 };
+  });
 }
 
 // ---------- tooltip ----------
@@ -131,10 +257,6 @@ function showTip(evt, title, body, meta, cat) {
     meta ? h("div", { class: "t-meta" }, meta) : null,
   );
   tip.classList.add("show");
-  moveTip(evt);
-}
-
-function moveTip(evt) {
   const pad = 14;
   const r = tip.getBoundingClientRect();
   let x = evt.clientX + pad;
@@ -147,10 +269,8 @@ function moveTip(evt) {
 
 const hideTip = () => tip.classList.remove("show");
 
-function statusLabel(st) {
-  const [icon, label] = STATUS[st] || ["", st || ""];
-  return h("span", { class: `status ${st}` }, h("i", { "aria-hidden": "true" }, icon), label);
-}
+const statusText = (st) => h("span", { class: `status ${st}` }, STATUS[st] || st);
+const errBadge = (n) => h("span", { class: "badge-err" }, n === 1 ? "1 error" : `${n} errors`);
 
 // ---------- sessions ----------
 
@@ -160,48 +280,59 @@ async function loadSessions() {
   renderSessionList();
   const wanted = location.hash.slice(1);
   if (wanted && wanted !== state.current) return openSession(wanted);
-  if (!state.current && state.sessions.length) return openSession(state.sessions[0].id);
+  if (!state.current) {
+    const first = state.sessions.find((x) => !isEmptySession(x)) || state.sessions[0];
+    if (first) return openSession(first.id);
+  }
   if (!state.sessions.length) renderEmpty();
 }
 
 function renderSessionList() {
   const list = document.getElementById("session-list");
   const query = document.getElementById("filter").value.trim().toLowerCase();
-  const rows = state.sessions.filter(
+  const matches = state.sessions.filter(
     (x) => !query || [x.title, x.cwd, x.id, x.model].some((v) => (v || "").toLowerCase().includes(query)),
   );
-  list.replaceChildren(
-    ...rows.map((x) =>
-      h(
-        "li",
-        { "aria-current": x.id === state.current ? "true" : "false", onclick: () => openSession(x.id) },
-        h("div", { class: "s-title" }, x.title || `Session ${x.id.slice(0, 8)}`),
-        h(
-          "div",
-          { class: "s-meta" },
-          h("span", { class: "badge" }, AGENT_NAMES[x.agent] || x.agent),
-          h("span", {}, basename(x.cwd) || "–"),
-          h("span", {}, relTime(x.started_at)),
-          h("span", { class: "num" }, `${x.tool_call_count} tools`),
-        ),
-      ),
-    ),
-  );
-  if (!rows.length) list.append(h("li", { class: "rank-empty" }, "No sessions match."));
+  const empty = matches.filter(isEmptySession);
+  const rows = matches.filter((x) => state.showEmpty || !isEmptySession(x) || x.id === state.current);
+  const manyAgents = new Set(state.sessions.map((x) => x.agent)).size > 1;
+  const items = [];
+  let day = null;
+  for (const x of rows) {
+    if (fmtDay(x.started_at) !== day) {
+      day = fmtDay(x.started_at);
+      items.push(h("li", { class: "s-day" }, day));
+    }
+    items.push(h("li", {}, h("button", { class: "s-item", type: "button", "aria-current": String(x.id === state.current),
+      onclick: () => openSession(x.id) },
+      h("div", { class: "s-title" }, sessionTitle(x)),
+      h("div", { class: "s-meta" },
+        h("span", {}, basename(x.cwd) || "–"),
+        h("span", { class: "num" }, fmtTime(x.started_at)),
+        h("span", { class: "num" }, plural(x.tool_call_count, "call")),
+        x.error_count ? h("span", { class: "s-err num" }, plural(x.error_count, "error")) : null,
+        manyAgents ? h("span", {}, AGENT_SHORT[x.agent] || x.agent) : null))));
+  }
+  if (!rows.length) items.push(h("li", { class: "s-none" }, matches.length ? "Only empty sessions match." : "No sessions match."));
+  list.replaceChildren(...items);
+  const toggle = document.getElementById("empty-toggle");
+  toggle.hidden = !empty.length;
+  toggle.textContent = state.showEmpty ? "Hide empty sessions" : `Show ${plural(empty.length, "empty session")}`;
 }
 
 function renderEmpty() {
   document.getElementById("main").replaceChildren(
-    h(
-      "div",
-      { class: "empty" },
+    h("div", { class: "empty" },
       h("p", {}, "No sessions recorded yet."),
-      h("p", {}, "Run ", h("code", {}, "hooklens install"), ", then start a new Claude Code or Codex session."),
-    ),
+      h("p", {}, "Run ", h("code", {}, "hooklens install"), ", then start a new Claude Code, Codex, or Cursor session.")),
   );
 }
 
 async function openSession(id) {
+  if (id !== state.current) {
+    Object.assign(state, { open: new Set(), selected: null, detail: null, catFilter: "", errorsOnly: false, query: "" });
+    state.prompts.clear();
+  }
   state.current = id;
   if (location.hash.slice(1) !== id) history.replaceState(null, "", `${location.search}#${id}`);
   renderSessionList();
@@ -211,162 +342,383 @@ async function openSession(id) {
     document.getElementById("main").replaceChildren(h("div", { class: "empty" }, "Session not found."));
     return;
   }
+  state.turns = buildTurns(state.data.events);
   renderMain();
 }
 
 // ---------- session view ----------
 
-function activeSegments(events) {
-  // Group event timestamps that are at most GAP seconds apart. Longer gaps become fixed-width breaks,
-  // so a tool call that waits a day for the user does not flatten the rest of the timeline.
-  const GAP = 60;
-  const points = events.flatMap((e) => (e.ended_at != null ? [e.started_at, e.ended_at] : [e.started_at]));
-  points.sort((a, b) => a - b);
-  const segs = [];
-  for (const t of points) {
-    const last = segs[segs.length - 1];
-    if (last && t <= last.end + GAP) last.end = t;
-    else segs.push({ start: t, end: t });
-  }
-  return segs;
+function setTab(id) {
+  state.tab = id;
+  const q = new URLSearchParams(location.search);
+  q.set("tab", id);
+  history.replaceState(null, "", `?${q}${location.hash}`);
+  renderMain();
 }
 
 function renderMain() {
   const { session: se, events, summary } = state.data;
-  const wallMs = ((se.ended_at || se.started_at) - se.started_at) * 1000;
-  const calls = events.filter((e) => e.kind === "tool_call");
+  const end = se.ended_at || se.started_at;
+  const wallMs = (end - se.started_at) * 1000;
+  const active = activeMs(segments(eventPoints(events)));
   const tokensIn = se.input_tokens + se.cache_read_tokens + se.cache_write_tokens;
-  const tokensTotal = tokensIn + se.output_tokens;
   const cachePct = tokensIn ? Math.round((100 * se.cache_read_tokens) / tokensIn) : 0;
-  const activity = ORDER.map((cat) => ({ cat, ms: calls.filter((e) => (e.category || "other") === cat)
-    .reduce((sum, e) => sum + (e.duration_ms || 0), 0) })).filter((x) => x.ms > 0);
-  const activityTotal = activity.reduce((sum, x) => sum + x.ms, 0);
-  const tile = (icon, label, value, note, color) => h("div", { class: "overview-tile" },
-    h("span", { class: "tile-icon", style: `--tile-color:${color}` }, iconSvg(icon, 28)),
-    h("div", { class: "tile-copy" }, h("div", { class: "tile-label" }, label), h("div", { class: "tile-value" }, value),
-      note ? h("div", { class: "tile-note" }, note) : null));
-  const steps = sessionSteps(events);
-  const timeline = h("section", { class: "overview-card timeline-card" },
-    h("div", { class: "section-heading" }, h("div", {}, h("h2", {}, "Timeline"),
-      h("p", {}, "Key steps from your request to the final response"))), renderSessionSteps(steps));
-  let graphHost = null;
-  const tabs = [
-    ["timeline", "Timeline", "timeline"],
-    ["graph", "Tool Graph", "graph"],
-    ["events", "Event Log", "events"],
-  ];
-  const tabBar = h("div", { class: "view-tabs", role: "tablist", "aria-label": "Session views" },
-    ...tabs.map(([id, label, icon]) => h("button", { class: "view-tab", type: "button", role: "tab",
-      id: `tab-${id}`, "aria-controls": "session-view-panel", "aria-selected": String(state.tab === id),
-      tabindex: state.tab === id ? "0" : "-1", onclick: () => {
-        state.tab = id;
-        renderMain();
-        if (id === "graph") requestAnimationFrame(focusGraphPanel);
-      } },
-    iconSvg(icon, 17), h("span", {}, label))));
-  const viewPanel = h("div", { id: "session-view-panel", class: "view-panel", role: "tabpanel",
-    "aria-labelledby": `tab-${state.tab}` });
-  if (state.tab === "timeline") {
-    viewPanel.append(timeline, renderActivity(activity, activityTotal));
-  } else if (state.tab === "graph") {
-    const graphCard = h("section", { class: "overview-card tab-card" },
-      h("div", { class: "section-heading" }, h("div", {}, h("h2", {}, "Tool graph"),
-        h("p", {}, "See which tools were used and how they are connected"))),
-      h("div", { class: "graph-content" }));
-    graphHost = graphCard.querySelector(".graph-content");
-    viewPanel.append(graphCard);
-  } else {
-    const sel = h("select", { class: "input event-filter", "aria-label": "Filter events by category",
-      onchange: (e) => { state.catFilter = e.target.value; renderMain(); } },
-      h("option", { value: "", selected: !state.catFilter }, "All categories"), ...ORDER.filter((c) => summary.categories[c])
-        .map((c) => h("option", { value: c, selected: state.catFilter === c }, CATS[c])));
-    const table = h("div", { class: "event-table" });
-    renderTable(table, events);
-    viewPanel.append(h("section", { class: "overview-card tab-card event-log-card" },
-      h("div", { class: "section-heading event-log-heading" }, h("div", {}, h("h2", {}, `Event Log (${events.length})`),
-        h("p", {}, "Detailed list of tool calls, logs and errors")), sel), table));
-  }
+  const title = sessionTitle(se);
+
+  const stat = (label, value, note, opts = {}) => h(opts.onclick ? "button" : "div",
+    { class: `stat${opts.bad ? " bad" : ""}`, type: opts.onclick ? "button" : null, onclick: opts.onclick, title: opts.title },
+    h("div", { class: "stat-label" }, label), h("div", { class: "stat-value num" }, value), h("div", { class: "stat-note" }, note));
+  const showErrors = () => {
+    Object.assign(state, { errorsOnly: true, catFilter: "", query: "" });
+    setTab("events");
+  };
+
+  const panel = h("div", { class: "view", role: "tabpanel", "aria-labelledby": `tab-${state.tab}` },
+    state.tab === "trace" ? renderTrace() : state.tab === "tools" ? renderTools() : renderEvents());
 
   document.getElementById("main").replaceChildren(
-    h("div", { class: "session-heading" }, h("div", { class: "s-head" },
-      h("h1", {}, truncate(se.title, 140) || `Session ${se.id.slice(0, 8)}`),
-      h("div", { class: "s-sub" }, h("span", {}, `${fmtDate(se.started_at)} – ${fmtClock(se.ended_at || se.started_at)}`),
-        h("span", {}, `${fmtDur(wallMs)} total duration`))),
-      h("button", { class: "btn export-btn", onclick: exportSession }, iconSvg("download", 17), " Export")),
-    h("div", { class: "overview-tiles" },
-      tile("clock", "Time spent", fmtDur(wallMs), AGENT_NAMES[se.agent] || se.agent, "#4b9cff"),
-      tile("bolt", "Actions taken", fmtNum(se.tool_call_count), `${fmtNum(se.prompt_count)} prompt${se.prompt_count === 1 ? "" : "s"}`, "#3bd49d"),
-      tile("alert", "Errors", fmtNum(se.error_count), se.tool_call_count ? `${Math.round((100 * se.error_count) / se.tool_call_count)}% of actions` : "No tool calls", "#ff5865"),
-      tile("file", "Files read", fmtNum(summary.files_read_total), `${fmtNum(summary.files_written_total)} files modified`, "#4b9cff"),
-      tile("database", "Tokens used", fmtNum(tokensTotal), `${cachePct}% from cache`, "#b06cff")),
-    tabBar, viewPanel,
+    h("header", { class: "s-header" },
+      h("div", { class: "s-head" },
+        h("div", { class: "s-eyebrow" }, [AGENT_NAMES[se.agent] || se.agent, basename(se.cwd), se.model].filter(Boolean).join(" · ")),
+        h("h1", { title }, truncate(title, 160)),
+        h("div", { class: "s-sub num" },
+          `${fmtDate(se.started_at)} – ${dayKey(end) === dayKey(se.started_at) ? fmtTime(end) : fmtDate(end)}`)),
+      h("button", { class: "btn", type: "button", onclick: exportSession, title: "Download this session as JSON" },
+        iconSvg("download", 14), "Export")),
+    h("div", { class: "stats" },
+      stat("Active time", fmtDur(active), `of ${fmtDur(wallMs)} in total`,
+        { title: "Time with agent activity. A gap of more than 5 minutes between events counts as idle." }),
+      stat("Tool calls", fmtNum(se.tool_call_count), plural(se.prompt_count, "prompt")),
+      stat("Errors", fmtNum(se.error_count), se.error_count ? "Show in events" : "None",
+        { bad: se.error_count > 0, onclick: se.error_count ? showErrors : null }),
+      stat("Files changed", fmtNum(summary.files_written_total), `${fmtNum(summary.files_read_total)} read`),
+      stat("Tokens", fmtNum(tokensIn + se.output_tokens), `${cachePct}% cache reads`)),
+    h("div", { class: "tabs", role: "tablist", "aria-label": "Session views" },
+      ...Object.entries(TABS).map(([id, label]) => h("button", { class: "tab", type: "button", role: "tab", id: `tab-${id}`,
+        "aria-selected": String(state.tab === id), onclick: () => setTab(id) }, label))),
+    panel,
   );
-  if (graphHost) renderGraph(graphHost, state.data.graph);
 }
 
-function focusGraphPanel() {
-  const main = document.getElementById("main");
-  const graphCard = main.querySelector(".tab-card");
-  if (!graphCard) return;
-  const mainRect = main.getBoundingClientRect();
-  const cardRect = graphCard.getBoundingClientRect();
-  const targetTop = main.scrollTop + cardRect.top - mainRect.top - main.clientTop - 8;
-  main.scrollTo({
-    top: Math.max(0, targetTop),
-    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
-  });
-}
+// ---------- trace ----------
 
-function sessionSteps(events) {
-  const sorted = [...events].sort((a, b) => a.started_at - b.started_at || a.id - b.id);
-  const prompts = sorted.filter((e) => e.kind === "prompt");
-  if (!prompts.length) return sorted.length ? [{ title: "Session activity", events: sorted }] : [];
-  const groups = prompts.map((prompt) => ({ title: prompt.summary || "Prompt received", events: [prompt] }));
-  for (const event of sorted) {
-    if (event.kind === "prompt") continue;
-    let index = -1;
-    for (let i = 0; i < prompts.length; i++) if (prompts[i].started_at <= event.started_at) index = i;
-    groups[Math.max(0, index)].events.push(event);
+function renderTrace() {
+  if (!state.turns.length) return h("div", { class: "empty" }, "No events recorded for this session yet.");
+  const maxActive = Math.max(1, ...state.turns.map((t) => t.active));
+  const rows = [];
+  let prev = null;
+  for (const t of state.turns) {
+    const idle = prev ? (t.start - prev.end) * 1000 : 0;
+    if (!prev || dayKey(t.start) !== dayKey(prev.start)) {
+      rows.push(h("div", { class: "tr-day" }, h("span", {}, fmtDay(t.start)),
+        idle > IDLE_GAP * 1000 ? h("span", { class: "idle num" }, `${fmtDur(idle)} idle`) : null));
+    } else if (idle > IDLE_GAP * 1000) {
+      rows.push(h("div", { class: "tr-idle num" }, `${fmtDur(idle)} idle`));
+    }
+    rows.push(turnRow(t, maxActive));
+    if (state.open.has(t.key)) rows.push(turnChildren(t));
+    prev = t;
   }
-  return groups.map((group) => {
-    const calls = group.events.filter((e) => e.kind === "tool_call");
-    const errors = calls.filter((e) => e.status === "error").length;
-    const cats = [...new Set(calls.map((e) => CATS[e.category] || "Other"))];
-    const descriptions = calls.slice(0, 3).map((e) => e.summary || e.tool_name).filter(Boolean);
-    const first = group.events[0];
-    const last = group.events.reduce((a, e) => Math.max(a, e.ended_at || e.started_at), first.started_at);
-    return { ...group, calls, errors, cats, descriptions, started_at: first.started_at, ended_at: last };
-  });
+  const selectedTurn = state.turns.find((t) => t.key === state.selected);
+  if (selectedTurn) state.detail = turnDetail(selectedTurn);
+  return h("div", { class: "trace" },
+    h("div", { class: "trace-list" },
+      h("div", { class: "tr-head" }, h("span", {}), h("span", {}, "Time"), h("span", {}, "Turn"),
+        h("span", { class: "tr-calls" }, "Calls"), h("span", { class: "tr-err" }), h("span", { class: "tr-dur" }, "Active"),
+        h("span", { class: "tr-meter-head" })),
+      ...rows),
+    h("aside", { id: "detail-panel", class: "detail-panel" },
+      state.detail || h("div", { class: "detail-empty" }, "Select a turn or a tool call to see its details.")));
 }
 
-function renderSessionSteps(steps) {
-  if (!steps.length) return h("div", { class: "overview-empty" }, "No events recorded for this session.");
-  return h("div", { class: "step-list" }, ...steps.map((step) => h("details", { class: "step-row" },
-    h("summary", {}, h("time", {}, fmtClock(step.started_at)),
-      h("span", { class: `step-marker${step.errors ? " has-error" : ""}`, "aria-hidden": "true" }, step.errors ? "!" : "✓"),
-      h("span", { class: "step-copy" }, h("strong", {}, truncate(step.title, 72)),
-        h("span", {}, step.calls.length ? `${step.calls.length} tool calls · ${fmtDur((step.ended_at - step.started_at) * 1000)}` : "Prompt received")),
-      h("span", { class: "step-count" }, step.calls.length ? `${step.calls.length} actions` : "1 prompt"),
-      step.errors ? h("span", { class: "step-error" }, `${step.errors} error${step.errors === 1 ? "" : "s"}`) : null,
-      h("span", { class: "chevron", "aria-hidden": "true" }, "⌄")),
-    h("div", { class: "step-detail" }, h("p", {}, step.descriptions.length ? step.descriptions.join(" · ") : "No tool calls in this step."),
-      step.cats.length ? h("div", { class: "step-tags" }, ...step.cats.map((cat) => h("span", {}, cat))) : null))));
+function turnRow(t, maxActive) {
+  const open = state.open.has(t.key);
+  const toggle = () => {
+    if (open) state.open.delete(t.key);
+    else state.open.add(t.key);
+    state.selected = t.key;
+    renderMain();
+  };
+  return h("button", { class: `tr-row tr-turn${t.system ? " system" : ""}${state.selected === t.key ? " selected" : ""}`,
+    type: "button", "aria-expanded": String(open), "data-key": t.key, onclick: toggle },
+    h("span", { class: "tr-chev" }, iconSvg("chevron", 14)),
+    h("span", { class: "tr-time num" }, fmtTime(t.start)),
+    h("span", { class: "tr-title" }, t.system ? h("span", { class: "tag" }, "system") : null, h("span", { class: "tr-text" }, t.title)),
+    h("span", { class: "tr-calls num" }, t.calls.length || ""),
+    h("span", { class: "tr-err" }, t.errors ? errBadge(t.errors) : null),
+    h("span", { class: "tr-dur num", title: t.wall - t.active >= 1000 ? `${fmtDur(t.wall)} with idle time` : null }, fmtDur(t.active)),
+    h("span", { class: "tr-meter", "aria-hidden": "true" }, h("span", { style: `width:${Math.max(2, (100 * t.active) / maxActive)}%` })));
 }
 
-function renderActivity(activity, total) {
-  const color = (cat) => getComputedStyle(document.documentElement).getPropertyValue(`--cat-${cat}`).trim() || "#8b95a5";
-  const segments = activity.map((x) => h("span", { class: "activity-segment",
-    style: `width:${(100 * x.ms) / (total || 1)}%;background:${color(x.cat)}`, title: `${CATS[x.cat]} ${fmtDur(x.ms)}` }));
-  const legendItems = activity.map((x) => h("div", { class: "activity-item" },
-    h("span", { class: "activity-dot", style: `background:${color(x.cat)}` }), h("span", {}, CATS[x.cat]),
-    h("span", { class: "activity-value" }, `${fmtDur(x.ms)} (${total ? Math.round((100 * x.ms) / total) : 0}%)`)));
-  return h("section", { class: "overview-card activity-card" },
-    h("div", { class: "section-heading" }, h("div", {}, h("h2", {}, "Time spent by activity"),
-      h("p", {}, "Share of recorded tool-call duration"))),
-    total ? h("div", { class: "activity-bar", role: "img", "aria-label": "Recorded tool duration by activity" }, ...segments)
-      : h("div", { class: "overview-empty" }, "No tool-call durations recorded."),
-    legendItems.length ? h("div", { class: "activity-legend" }, ...legendItems) : null);
+function turnChildren(t) {
+  const x = timeScale(t.segs);
+  const gapLines = () => x.gaps.map((g) => h("span", { class: "gap", style: `left:${100 * g.x}%` }));
+  const items = t.events.filter((e) => e.kind !== "prompt" && e.kind !== "stop").map((e) => childRow(t, e, x, gapLines));
+  if (!items.length) return h("div", { class: "tr-children" }, h("div", { class: "tr-none" }, "No tool calls in this turn."));
+  const axis = h("div", { class: "tr-child tr-axis num" }, h("span", { class: "tr-off" }, "Start"), h("span", {}, "Tool"),
+    h("span", { class: "tr-target" }, "Target"), h("span", { class: "tr-dur" }, "Duration"),
+    h("span", { class: "tr-track" }, ...gapLines(),
+      ...x.gaps.map((g) => h("span", { class: "gap-label", style: `left:${100 * g.x}%`, title: `${fmtDur(g.ms)} idle` }, "≈")),
+      h("span", { class: "axis-end" }, fmtDur(t.active))));
+  return h("div", { class: "tr-children" }, axis, ...items);
 }
+
+function childRow(t, e, x, gapLines) {
+  const cwd = state.data.session.cwd;
+  const key = `event:${e.id}`;
+  const left = x.at(e.started_at);
+  const isCall = e.kind === "tool_call";
+  const label = isCall ? shorten(e.target || e.summary || "", cwd) : e.summary || "";
+  const mark = isCall
+    ? h("span", { class: "tr-bar", style: `left:${100 * left}%;width:${100 * Math.max(x.at(e.ended_at ?? e.started_at) - left, 0)}%;`
+        + `background:${catColor(e.category)}${e.status === "running" ? ";opacity:.45" : ""}` })
+    : h("span", { class: "tr-pt", style: `left:${100 * left}%` });
+  const meta = isCall ? `${fmtClock(e.started_at)} · ${fmtDur(e.duration_ms)} · ${STATUS[e.status] || e.status}` : fmtClock(e.started_at);
+  return h("button", { class: `tr-row tr-child${isCall ? "" : " tr-point"}${state.selected === key ? " selected" : ""}`, type: "button",
+    "data-key": key, onclick: () => selectEvent(e.id) },
+    h("span", { class: "tr-off num" }, `+${fmtDur((e.started_at - t.start) * 1000)}`),
+    h("span", { class: "tr-tool" }, isCall ? swatch(e.category) : h("span", { class: "pt-dot" }),
+      h("span", { class: "tr-text" }, isCall ? prettyTool(e.tool_name) || CATS[e.category] : KIND_LABELS[e.kind] || e.kind)),
+    h("span", { class: "tr-target" }, e.status === "error" ? h("span", { class: "badge-err" }, "Error")
+      : isCall && e.status !== "ok" ? h("span", { class: "badge-muted" }, STATUS[e.status] || e.status) : null,
+      h("span", { class: "tr-text mono" }, firstLine(label))),
+    h("span", { class: "tr-dur num" }, isCall ? fmtDur(e.duration_ms) : ""),
+    h("span", { class: "tr-track", onmousemove: (ev) => showTip(ev, isCall ? prettyTool(e.tool_name) : KIND_LABELS[e.kind], label, meta,
+      isCall ? e.category : null), onmouseleave: hideTip }, ...gapLines(), mark));
+}
+
+// ---------- details ----------
+
+const dlRow = (k, v) => (v == null || v === "" ? null : [h("dt", {}, k), h("dd", {}, v)]);
+const section = (title, ...body) => h("section", { class: "d-section" }, h("h3", {}, title), ...body);
+
+function aggregateFiles(files) {
+  const map = new Map();
+  for (const f of files) {
+    const x = map.get(f.path) || { path: f.path, read: 0, write: 0 };
+    if (f.op === "read") x.read++;
+    else x.write++;
+    map.set(f.path, x);
+  }
+  return [...map.values()].sort((a, b) => b.write - a.write || b.read - a.read || a.path.localeCompare(b.path));
+}
+
+function fileList(files, limit = 60) {
+  const shown = files.slice(0, limit);
+  return h("ul", { class: "f-list" },
+    ...shown.map((f) => {
+      const base = basename(f.path);
+      const dir = f.path.slice(0, f.path.length - base.length);
+      return h("li", { title: `${f.path}\n${plural(f.write, "write")}, ${plural(f.read, "read")}` },
+        h("span", { class: "f-name" }, h("span", { class: "f-base" }, base), dir ? h("span", { class: "f-dir" }, dir) : null),
+        h("span", { class: "f-op" }, swatch(f.write ? "file_write" : "file_read"), f.write ? "changed" : "read"));
+    }),
+    files.length > limit ? h("li", { class: "f-more" }, `${files.length - limit} more`) : null);
+}
+
+function categoryShare(calls) {
+  const activity = ORDER.map((cat) => ({ cat, ms: calls.filter((e) => (e.category || "other") === cat)
+    .reduce((sum, e) => sum + (e.duration_ms || 0), 0) })).filter((x) => x.ms > 0);
+  const total = activity.reduce((sum, x) => sum + x.ms, 0);
+  if (!total) return h("div", { class: "muted" }, "No tool-call durations recorded.");
+  const pct = (ms) => `${Math.round((100 * ms) / total)}%`;
+  return h("div", {},
+    h("div", { class: "share", role: "img", "aria-label": activity.map((x) => `${CATS[x.cat]} ${pct(x.ms)}`).join(", ") },
+      ...activity.map((x) => h("span", { style: `flex:${x.ms} 1 0;background:${catColor(x.cat)}`,
+        onmousemove: (ev) => showTip(ev, CATS[x.cat], null, `${fmtDur(x.ms)} · ${pct(x.ms)} of tool time`, x.cat), onmouseleave: hideTip }))),
+    h("div", { class: "share-legend" },
+      ...activity.map((x) => h("span", {}, swatch(x.cat), h("b", {}, CATS[x.cat]), h("span", { class: "num" }, `${fmtDur(x.ms)} · ${pct(x.ms)}`)))));
+}
+
+function turnDetail(t) {
+  const ids = new Set(t.calls.map((e) => e.id));
+  const files = aggregateFiles(state.data.files.filter((f) => ids.has(f.event_id)));
+  const promptBox = h("div", { class: "d-prompt" }, state.prompts.get(t.prompt?.id) || t.prompt?.summary || "No prompt");
+  if (t.prompt && !state.prompts.has(t.prompt.id)) {
+    api(`/api/events/${t.prompt.id}`).then((e) => {
+      state.prompts.set(t.prompt.id, e.detail?.prompt || t.prompt.summary);
+      promptBox.textContent = state.prompts.get(t.prompt.id);
+    }).catch(() => {});
+  }
+  return h("div", { class: "detail" },
+    h("div", { class: "d-eyebrow num" }, `Turn ${t.index} · ${fmtDate(t.start)}`),
+    h("h2", {}, truncate(t.title, 200)),
+    h("dl", { class: "d-grid num" },
+      dlRow("Active time", fmtDur(t.active)),
+      dlRow("Total time", t.wall - t.active >= 1000 ? fmtDur(t.wall) : null),
+      dlRow("Tool calls", String(t.calls.length)),
+      dlRow("Errors", t.errors ? h("span", { class: "status error" }, String(t.errors)) : "0")),
+    t.calls.length ? section("Time by activity", categoryShare(t.calls)) : null,
+    section("Prompt", promptBox),
+    files.length ? section(`Files (${files.length})`, fileList(files)) : null);
+}
+
+// Show each input field on its own, so a multi-line command reads as it was written.
+function inputView(input) {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) {
+    return h("pre", {}, typeof input === "string" ? input : JSON.stringify(input, null, 2));
+  }
+  return h("div", { class: "kv" }, ...Object.entries(input).map(([k, v]) => h("div", {},
+    h("div", { class: "kv-key mono" }, k), h("pre", {}, typeof v === "string" ? v : JSON.stringify(v, null, 2)))));
+}
+
+function eventDetail(e) {
+  const cwd = state.data.session.cwd;
+  const d = e.detail || {};
+  const isCall = e.kind === "tool_call";
+  const block = (title, v, cls) => (v == null || v === "" ? null
+    : section(title, h("pre", { class: cls }, typeof v === "string" ? v : JSON.stringify(v, null, 2))));
+  return h("div", { class: "detail" },
+    h("div", { class: "d-eyebrow" }, isCall ? [swatch(e.category), CATS[e.category] || e.category] : KIND_LABELS[e.kind] || e.kind),
+    h("h2", {}, isCall ? prettyTool(e.tool_name) : truncate(cleanPrompt(e.summary).title, 200) || e.kind),
+    h("dl", { class: "d-grid num" },
+      dlRow("Status", isCall ? statusText(e.status) : null),
+      dlRow("Started", fmtDateSec(e.started_at)),
+      dlRow("Duration", isCall ? fmtDur(e.duration_ms) : null),
+      dlRow("Source", e.source === "transcript" ? "Transcript (no hook for this tool)" : null),
+      dlRow("Tool use id", e.tool_use_id)),
+    e.target && d.input === undefined ? section("Target", h("pre", {}, shorten(e.target, cwd))) : null,
+    e.files.length ? section(`Files (${e.files.length})`,
+      fileList(aggregateFiles(e.files.map((f) => ({ path: shorten(f.path, cwd), op: f.op }))))) : null,
+    block("Error", d.error, "err"),
+    block("Prompt", d.prompt),
+    d.input !== undefined ? section("Input", inputView(d.input)) : null,
+    block("Response (excerpt)", d.response),
+    !isCall && !d.prompt && Object.keys(d).length ? block("Payload", d) : null);
+}
+
+async function selectEvent(id) {
+  hideTip();
+  state.selected = `event:${id}`;
+  let e;
+  try {
+    e = await api(`/api/events/${id}`);
+  } catch {
+    return;
+  }
+  state.detail = eventDetail(e);
+  const panel = document.getElementById("detail-panel");
+  document.querySelectorAll(".tr-row.selected").forEach((r) => r.classList.remove("selected"));
+  document.querySelector(`.tr-row[data-key="event:${id}"]`)?.classList.add("selected");
+  if (panel && wide()) {
+    setChildren(panel, state.detail);
+    panel.scrollTop = 0;
+    return;
+  }
+  document.getElementById("drawer-title").textContent = e.kind === "tool_call" ? prettyTool(e.tool_name) : KIND_LABELS[e.kind] || e.kind;
+  setChildren(document.getElementById("drawer-body"), state.detail);
+  drawer.setAttribute("aria-hidden", "false");
+}
+
+// ---------- tools and files ----------
+
+function toolStats(calls) {
+  const map = new Map();
+  for (const e of calls) {
+    const name = e.tool_name || "unknown";
+    const x = map.get(name) || { name, cats: {}, calls: 0, errors: 0, durs: [] };
+    x.calls++;
+    if (e.status === "error") x.errors++;
+    if (e.duration_ms != null) x.durs.push(e.duration_ms);
+    x.cats[e.category || "other"] = (x.cats[e.category || "other"] || 0) + 1;
+    map.set(name, x);
+  }
+  return [...map.values()].map((x) => {
+    x.durs.sort((a, b) => a - b);
+    const q = (p) => (x.durs.length ? x.durs[Math.min(x.durs.length - 1, Math.floor(p * x.durs.length))] : null);
+    const cat = Object.entries(x.cats).sort((a, b) => b[1] - a[1])[0][0];
+    return { ...x, cat, total: x.durs.reduce((a, b) => a + b, 0), p50: q(0.5), p95: q(0.95) };
+  }).sort((a, b) => b.total - a.total || b.calls - a.calls);
+}
+
+function rankList(items, cat) {
+  if (!items.length) return h("div", { class: "muted" }, "None");
+  const max = Math.max(...items.map((i) => i.count));
+  return h("ul", { class: "rank" }, ...items.map((i) => h("li", { title: i.name },
+    h("span", { class: "rank-name mono" }, i.name), h("span", { class: "rank-count num" }, i.count),
+    h("span", { class: "rank-bar" }, h("span", { style: `width:${(100 * i.count) / max}%;background:${catColor(cat)}` })))));
+}
+
+function renderTools() {
+  const { events, summary, files } = state.data;
+  const calls = events.filter((e) => e.kind === "tool_call");
+  if (!calls.length) return h("div", { class: "empty" }, "No tool calls in this session.");
+  const tools = toolStats(calls);
+  const maxTotal = Math.max(1, ...tools.map((t) => t.total));
+  const allFiles = aggregateFiles(files);
+  const num = (v, cls = "r num") => h("td", { class: cls }, v);
+  return h("div", { class: "tools" },
+    h("section", { class: "card" }, h("h2", {}, "Time by activity"), h("p", { class: "sub" }, "Share of the recorded tool-call time"),
+      categoryShare(calls)),
+    h("section", { class: "card" }, h("h2", {}, "Tools"), h("p", { class: "sub" }, "Sorted by total time"),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "Tool"), h("th", { class: "r" }, "Calls"), h("th", { class: "r" }, "Errors"),
+          h("th", { class: "r" }, "Total"), h("th", { class: "r" }, "Median"), h("th", { class: "r" }, "p95"), h("th", { class: "bar-col" }))),
+        h("tbody", {}, ...tools.map((t) => h("tr", {},
+          h("td", {}, h("span", { class: "status" }, swatch(t.cat), prettyTool(t.name))),
+          num(t.calls), h("td", { class: "r num" }, t.errors ? h("span", { class: "status error" }, t.errors) : h("span", { class: "muted" }, "–")),
+          num(fmtDur(t.total)), num(fmtDur(t.p50)), num(fmtDur(t.p95)),
+          h("td", { class: "bar-col" }, h("span", { class: "t-bar" },
+            h("span", { style: `width:${Math.max(1, (100 * t.total) / maxTotal)}%;background:${catColor(t.cat)}` }))))))))),
+    h("div", { class: "two" },
+      h("section", { class: "card" }, h("h2", {}, `Files (${allFiles.length})`), h("p", { class: "sub" }, "Changed files first"),
+        allFiles.length ? fileList(allFiles, 200) : h("div", { class: "muted" }, "No files recorded.")),
+      h("div", { class: "stack" },
+        h("section", { class: "card" }, h("h2", {}, "Commands"), h("p", { class: "sub" }, "Programs run in Bash"),
+          rankList(summary.commands, "bash")),
+        summary.mcp_servers.length ? h("section", { class: "card" }, h("h2", {}, "MCP servers"), h("p", { class: "sub" }, "Calls by server"),
+          rankList(summary.mcp_servers, "mcp")) : null)));
+}
+
+// ---------- events ----------
+
+function renderEvents() {
+  const host = h("div", { class: "table-wrap" });
+  const count = h("span", { class: "count num" });
+  const update = () => renderEventTable(host, count);
+  const search = h("input", { class: "input", type: "search", placeholder: "Search tools, targets, prompts", value: state.query,
+    "aria-label": "Search events", oninput: (e) => { state.query = e.target.value; update(); } });
+  const cats = ORDER.filter((c) => state.data.summary.categories[c]);
+  const select = h("select", { class: "input", "aria-label": "Filter by category", onchange: (e) => { state.catFilter = e.target.value; update(); } },
+    h("option", { value: "", selected: !state.catFilter }, "All categories"),
+    ...cats.map((c) => h("option", { value: c, selected: state.catFilter === c }, CATS[c])));
+  const errors = h("label", { class: "check" }, h("input", { type: "checkbox", checked: state.errorsOnly,
+    onchange: (e) => { state.errorsOnly = e.target.checked; update(); } }), "Errors only");
+  update();
+  return h("section", { class: "card events" }, h("div", { class: "toolbar" }, search, select, errors, count), host);
+}
+
+function renderEventTable(host, count) {
+  const { events, session } = state.data;
+  const cwd = session.cwd;
+  const multiDay = dayKey(session.started_at) !== dayKey(session.ended_at || session.started_at);
+  const q = state.query.trim().toLowerCase();
+  const text = (e) => (e.kind === "prompt" ? cleanPrompt(e.summary).title : shorten(e.target || (e.kind !== "tool_call" ? e.summary : "") || "", cwd));
+  const rows = events.filter((e) => (!state.catFilter || e.category === state.catFilter)
+    && (!state.errorsOnly || e.status === "error")
+    && (!q || [e.tool_name, e.target, e.summary].some((v) => (v || "").toLowerCase().includes(q))));
+  count.textContent = rows.length === events.length ? plural(events.length, "event") : `${rows.length} of ${plural(events.length, "event")}`;
+  if (!rows.length) {
+    setChildren(host, h("div", { class: "empty" }, "No events match."));
+    return;
+  }
+  setChildren(host, h("table", { class: "clickable" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Time"), h("th", {}, "Type"), h("th", {}, "Tool"), h("th", {}, "Target"),
+      h("th", { class: "r" }, "Duration"), h("th", {}, "Status"))),
+    h("tbody", {}, ...rows.map((e) => {
+      const isCall = e.kind === "tool_call";
+      return h("tr", { onclick: () => selectEvent(e.id) },
+        h("td", { class: "num nowrap muted" }, multiDay ? fmtDateSec(e.started_at) : fmtClock(e.started_at)),
+        h("td", { class: "nowrap" }, isCall ? h("span", { class: "status" }, swatch(e.category), CATS[e.category] || e.category)
+          : h("span", { class: "muted" }, KIND_LABELS[e.kind] || e.kind)),
+        h("td", { class: "nowrap" }, prettyTool(e.tool_name)),
+        h("td", { class: "target", title: text(e) }, firstLine(text(e))),
+        h("td", { class: "r num nowrap" }, isCall ? fmtDur(e.duration_ms) : ""),
+        h("td", { class: "nowrap" }, isCall && e.status !== "ok" ? statusText(e.status) : ""));
+    }))));
+}
+
+// ---------- export, sidebar, drawer ----------
 
 function exportSession() {
   const blob = new Blob([JSON.stringify({ ...state.data, exported_at: new Date().toISOString() }, null, 2)],
@@ -387,398 +739,15 @@ function updateSidebarToggle() {
 }
 sidebarToggle.addEventListener("click", () => {
   const collapsed = document.body.classList.toggle("sidebar-collapsed");
-  localStorage.setItem("hooklens-sidebar-collapsed", String(collapsed));
+  try { localStorage.setItem("hooklens-sidebar-collapsed", String(collapsed)); } catch { /* storage can be blocked */ }
   updateSidebarToggle();
 });
-if (localStorage.getItem("hooklens-sidebar-collapsed") === "true") document.body.classList.add("sidebar-collapsed");
+try {
+  if (localStorage.getItem("hooklens-sidebar-collapsed") === "true") document.body.classList.add("sidebar-collapsed");
+} catch { /* storage can be blocked */ }
 updateSidebarToggle();
 
-function legend(cats, ...items) {
-  return h("div", { class: "legend" }, ...cats.map((c) => h("span", {}, swatch(c), CATS[c])), ...items);
-}
-
-// ---------- timeline ----------
-
-function renderTimeline(host, events) {
-  const calls = events.filter((e) => e.kind === "tool_call");
-  const marks = events.filter((e) => ["prompt", "interrupt", "compact", "subagent"].includes(e.kind));
-  if (!calls.length) {
-    host.append(h("div", { class: "empty" }, "No tool calls in this session."));
-    return;
-  }
-
-  const LABEL = 128, RIGHT = 16, AXIS = 30, ROW = 18, BAR = 12, LANE_PAD = 8, GAPW = 18, MINW = 10;
-  const baseW = Math.max(host.clientWidth - 32, 640) * state.zoom;
-  const segs = activeSegments([...calls, ...marks]);
-  const totalSec = segs.reduce((a, x) => a + (x.end - x.start), 0);
-  const avail = baseW - LABEL - RIGHT - GAPW * (segs.length - 1) - MINW * segs.length;
-  const k = totalSec > 0 ? Math.max(avail, totalSec * 0.5) / totalSec : 0;
-  let cursor = LABEL;
-  for (const g of segs) {
-    g.x0 = cursor;
-    g.x1 = cursor + (g.end - g.start) * k + MINW;
-    cursor = g.x1 + GAPW;
-  }
-  const width = cursor - GAPW + RIGHT;
-  const tx = (t) => {
-    for (let i = 0; i < segs.length; i++) {
-      const g = segs[i];
-      if (t <= g.end) {
-        if (t >= g.start || i === 0) return g.x0 + Math.max(0, t - g.start) * k;
-        const prev = segs[i - 1]; // t falls in an idle gap: spread it over the break
-        return prev.x1 + ((t - prev.end) / (g.start - prev.end)) * (g.x0 - prev.x1);
-      }
-    }
-    return segs[segs.length - 1].x1 - MINW;
-  };
-
-  // Pack each category lane into sub-rows so that overlapping calls do not hide each other.
-  const lanes = ORDER.filter((c) => calls.some((e) => (e.category || "other") === c)).map((c) => ({ cat: c, rows: [] }));
-  const laneOf = Object.fromEntries(lanes.map((l) => [l.cat, l]));
-  const bars = [];
-  for (const e of [...calls].sort((a, b) => a.started_at - b.started_at)) {
-    const lane = laneOf[e.category || "other"];
-    const x0 = tx(e.started_at);
-    const x1 = Math.max(tx(e.ended_at ?? e.started_at), x0 + 3);
-    let row = lane.rows.findIndex((end) => end + 2 <= x0);
-    if (row < 0) row = lane.rows.push(0) - 1;
-    lane.rows[row] = x1;
-    bars.push({ e, lane, row, x0, x1 });
-  }
-  let y = AXIS + 6;
-  for (const l of lanes) {
-    l.y = y;
-    l.h = l.rows.length * ROW + LANE_PAD;
-    y += l.h;
-  }
-  const height = y + 6;
-
-  const svg = s("svg", { width, height, role: "img", "aria-label": "Tool call timeline" });
-
-  // Idle gaps.
-  segs.slice(1).forEach((g, i) => {
-    const prev = segs[i];
-    const gx = prev.x1 + 2, gw = GAPW - 4;
-    const idle = (g.start - prev.end) * 1000;
-    svg.append(
-      s("rect", { x: gx, y: AXIS - 4, width: gw, height: height - AXIS, fill: "var(--surface-2)", rx: 2,
-        onmousemove: (ev) => showTip(ev, "Idle", null, `${fmtDur(idle)} with no new events`),
-        onmouseleave: hideTip }),
-    );
-  });
-
-  // Lane labels and separators.
-  for (const l of lanes) {
-    const count = calls.filter((e) => (e.category || "other") === l.cat).length;
-    svg.append(
-      s("line", { x1: 0, x2: width, y1: l.y + l.h, y2: l.y + l.h, stroke: "var(--grid)" }),
-      s("rect", { x: 0, y: l.y + 4, width: 10, height: 10, rx: 3, fill: catColor(l.cat) }),
-      s("text", { x: 16, y: l.y + 13, "font-size": 12, fill: "var(--ink)" }, CATS[l.cat]),
-      s("text", { x: LABEL - 12, y: l.y + 13, "font-size": 11, fill: "var(--muted)", "text-anchor": "end" }, count),
-    );
-  }
-
-  // Axis: a clock label at each segment start, then more labels inside long segments.
-  svg.append(s("line", { x1: LABEL, x2: width - RIGHT, y1: AXIS, y2: AXIS, stroke: "var(--axis)" }));
-  let lastLabel = -Infinity;
-  const step = 140 / (k || 1);
-  for (const g of segs) {
-    const ticks = [g.start];
-    if (k > 0) for (let t = g.start + step; t < g.end; t += step) ticks.push(t);
-    for (const t of ticks) {
-      const x = tx(t);
-      if (x - lastLabel < 96) continue;
-      lastLabel = x;
-      svg.append(
-        s("line", { x1: x, x2: x, y1: AXIS, y2: AXIS + 4, stroke: "var(--axis)" }),
-        s("text", { x, y: AXIS - 10, "font-size": 11, fill: "var(--muted)", class: "num",
-          "text-anchor": x > width - 90 ? "end" : "start" }, fmtClock(t)),
-      );
-    }
-  }
-
-  // Prompt and other point markers.
-  for (const m of marks) {
-    const x = tx(m.started_at);
-    const isPrompt = m.kind === "prompt";
-    svg.append(
-      s("line", { x1: x, x2: x, y1: AXIS, y2: height - 6, stroke: "var(--ink-2)", "stroke-opacity": isPrompt ? 0.35 : 0.2 }),
-      s("circle", { cx: x, cy: AXIS, r: 4.5, fill: isPrompt ? "var(--ink)" : "var(--muted)", stroke: "var(--surface)", "stroke-width": 2,
-        style: "cursor:pointer",
-        onmousemove: (ev) => showTip(ev, isPrompt ? "Prompt" : m.summary, isPrompt ? m.summary : null, fmtClock(m.started_at)),
-        onmouseleave: hideTip, onclick: () => openEvent(m.id) }),
-    );
-  }
-
-  // Tool call bars, each with a larger invisible hit target.
-  for (const b of bars) {
-    const by = b.lane.y + b.row * ROW + (ROW - BAR) / 2 + 2;
-    const e = b.e;
-    const meta = `${fmtClock(e.started_at)} · ${fmtDur(e.duration_ms)} · ${(STATUS[e.status] || [, e.status])[1]}`;
-    const enter = (ev) => showTip(ev, e.tool_name, e.target, meta, e.category);
-    const g = s("g", { onmousemove: enter, onmouseleave: hideTip, onclick: () => openEvent(e.id) });
-    g.append(
-      s("rect", { class: "tl-hit", x: b.x0 - 3, y: by - 3, width: b.x1 - b.x0 + 6, height: BAR + 6 }),
-      s("rect", { class: "tl-bar", x: b.x0, y: by, width: b.x1 - b.x0, height: BAR, rx: 3, fill: catColor(e.category),
-        "fill-opacity": e.status === "running" ? 0.4 : 1 }),
-    );
-    if (e.status === "error") {
-      g.append(s("circle", { cx: b.x1 + 1, cy: by, r: 4, fill: "var(--critical)", stroke: "var(--surface)", "stroke-width": 2 }));
-    }
-    svg.append(g);
-  }
-
-  host.append(
-    legend(lanes.map((l) => l.cat),
-      h("span", {}, h("span", { class: "sw", style: "background:var(--ink);border-radius:50%" }), "Prompt"),
-      h("span", {}, h("span", { class: "sw", style: "background:var(--critical);border-radius:50%" }), "Error"),
-      h("span", {}, h("span", { class: "sw", style: "background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--axis)" }), "Idle gap over 60s (compressed)")),
-    h("div", { class: "timeline-scroll" }, svg),
-  );
-}
-
-// ---------- graph ----------
-
-function renderGraph(host, graph) {
-  if (graph.nodes.length <= 1) {
-    host.append(h("div", { class: "empty" }, "No tool calls in this session."));
-    return;
-  }
-  const W = Math.max(host.clientWidth - 32, 480);
-  const H = Math.max(520, Math.min(820, 260 + graph.nodes.length * 4));
-  const nodes = graph.nodes.map((n) => ({ ...n, vx: 0, vy: 0 }));
-  const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
-  const links = graph.links.map((l) => ({ ...l, s: byId[l.source], t: byId[l.target] })).filter((l) => l.s && l.t);
-
-  const radius = (n) =>
-    n.type === "session" ? 14 : n.type === "hub" ? Math.min(22, 7 + 1.6 * Math.sqrt(n.count)) :
-    n.type === "group" ? Math.min(16, 6 + 1.4 * Math.sqrt(n.count)) : Math.min(12, 4 + 1.2 * Math.sqrt(n.count));
-  nodes.forEach((n) => (n.r = radius(n)));
-
-  // Start layout: hubs on a circle, children near their parent.
-  const parentOf = {};
-  links.forEach((l) => (parentOf[l.t.id] ??= l.s));
-  const hubs = nodes.filter((n) => n.type === "hub");
-  hubs.forEach((n, i) => {
-    const a = (2 * Math.PI * i) / hubs.length;
-    n.x = Math.cos(a) * 150;
-    n.y = Math.sin(a) * 150;
-  });
-  const session = byId.session;
-  session.x = session.y = 0;
-  let seed = 1;
-  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) - 0.5;
-  for (const n of nodes) {
-    if (n.x != null) continue;
-    const p = parentOf[n.id] && parentOf[n.id].x != null ? parentOf[n.id] : session;
-    const a = Math.atan2(p.y, p.x) + rand() * 2;
-    n.x = p.x * 1.4 + Math.cos(a) * 60;
-    n.y = p.y * 1.4 + Math.sin(a) * 60;
-  }
-
-  // Force layout: pairwise repulsion, springs on links, weak gravity. Session stays at the center.
-  const ITER = 320;
-  for (let it = 0; it < ITER; it++) {
-    const alpha = 1 - it / ITER;
-    for (let i = 0; i < nodes.length; i++) {
-      const a = nodes[i];
-      for (let j = i + 1; j < nodes.length; j++) {
-        const b = nodes[j];
-        let dx = b.x - a.x, dy = b.y - a.y;
-        let d2 = dx * dx + dy * dy;
-        if (d2 < 1) { dx = rand(); dy = rand(); d2 = 1; }
-        const min = a.r + b.r + 10;
-        const f = (1400 * alpha) / d2 + (d2 < min * min ? 0.5 : 0);
-        const d = Math.sqrt(d2);
-        a.vx -= (dx / d) * f; a.vy -= (dy / d) * f;
-        b.vx += (dx / d) * f; b.vy += (dy / d) * f;
-      }
-    }
-    for (const l of links) {
-      const dx = l.t.x - l.s.x, dy = l.t.y - l.s.y;
-      const d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const len = l.s.type === "session" ? 140 : 36 + l.s.r + l.t.r;
-      const f = (d - len) * 0.06 * alpha;
-      l.s.vx += (dx / d) * f; l.s.vy += (dy / d) * f;
-      l.t.vx -= (dx / d) * f; l.t.vy -= (dy / d) * f;
-    }
-    for (const n of nodes) {
-      n.vx -= n.x * 0.004 * alpha;
-      n.vy -= n.y * 0.004 * alpha;
-      if (n === session) { n.vx = n.vy = 0; continue; }
-      n.x += n.vx; n.y += n.vy;
-      n.vx *= 0.55; n.vy *= 0.55;
-    }
-  }
-
-  // Fit the layout into the view box, leaving room for labels.
-  const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-  const PAD = 70;
-  const scale = Math.min((W - 2 * PAD) / (maxX - minX || 1), (H - 2 * PAD) / (maxY - minY || 1), 2.5);
-  const ox = W / 2 - ((minX + maxX) / 2) * scale, oy = H / 2 - ((minY + maxY) / 2) * scale;
-  nodes.forEach((n) => { n.px = n.x * scale + ox; n.py = n.y * scale + oy; });
-
-  // Label every hub and group, plus the busiest leaves.
-  const labeled = new Set(nodes.filter((n) => n.type !== "leaf").map((n) => n.id));
-  nodes.filter((n) => n.type === "leaf").sort((a, b) => b.count - a.count).slice(0, 36).forEach((n) => labeled.add(n.id));
-
-  const svg = s("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Session resource graph" });
-  const linkLayer = s("g"), nodeLayer = s("g"), labelLayer = s("g", { "pointer-events": "none" });
-  svg.append(linkLayer, nodeLayer, labelLayer);
-
-  for (const l of links) {
-    l.el = s("line", { stroke: "var(--axis)", "stroke-width": Math.min(4, 1 + Math.log2(l.count)), "stroke-linecap": "round" });
-    linkLayer.append(l.el);
-  }
-  const place = () => {
-    for (const l of links) {
-      l.el.setAttribute("x1", l.s.px); l.el.setAttribute("y1", l.s.py);
-      l.el.setAttribute("x2", l.t.px); l.el.setAttribute("y2", l.t.py);
-    }
-    for (const n of nodes) {
-      n.el.setAttribute("transform", `translate(${n.px},${n.py})`);
-      if (n.label_el) {
-        n.label_el.setAttribute("x", n.px + (n.px >= W / 2 ? n.r + 5 : -n.r - 5));
-        n.label_el.setAttribute("y", n.py + 4);
-        n.label_el.setAttribute("text-anchor", n.px >= W / 2 ? "start" : "end");
-      }
-    }
-  };
-
-  for (const n of nodes) {
-    const fill = n.type === "session" ? "var(--ink)" : n.type === "more" ? "var(--surface-2)" : catColor(n.category);
-    const circle = s("circle", { r: n.r, fill, stroke: n.type === "more" ? "var(--axis)" : "var(--surface)", "stroke-width": 2 });
-    n.el = s("g", { class: "node" }, circle, s("circle", { r: Math.max(n.r + 4, 10), fill: "transparent" }));
-    const title = n.type === "session" ? "Session" : n.type === "hub" ? n.label : n.label;
-    const meta = n.type === "session" ? n.label : `${n.count} call${n.count === 1 ? "" : "s"}`;
-    n.el.addEventListener("mousemove", (ev) => showTip(ev, truncate(title, 80), n.type === "leaf" && n.label.length > 30 ? n.label : null, meta,
-      n.type === "session" || n.type === "more" ? null : n.category));
-    n.el.addEventListener("mouseleave", hideTip);
-    dragNode(svg, n, place);
-    nodeLayer.append(n.el);
-    if (labeled.has(n.id) && n.type !== "session") {
-      const text = n.type === "leaf" && n.category.startsWith("file") ? basename(n.label) : truncate(n.label, 28);
-      n.label_el = s("text", { "font-size": n.type === "hub" ? 12 : 11, "font-weight": n.type === "hub" ? 600 : 400,
-        fill: n.type === "hub" ? "var(--ink)" : "var(--ink-2)", "paint-order": "stroke", stroke: "var(--surface)",
-        "stroke-width": 3, "stroke-linejoin": "round" }, text);
-      labelLayer.append(n.label_el);
-    }
-  }
-  place();
-
-  const cats = ORDER.filter((c) => nodes.some((n) => n.type === "hub" && n.category === c));
-  host.append(legend(cats), h("div", { class: "graph" }, svg));
-}
-
-function dragNode(svg, n, place) {
-  n.el.addEventListener("pointerdown", (ev) => {
-    ev.preventDefault();
-    hideTip();
-    n.el.setPointerCapture(ev.pointerId);
-    const pt = svg.createSVGPoint();
-    const move = (e) => {
-      pt.x = e.clientX; pt.y = e.clientY;
-      const p = pt.matrixTransform(svg.getScreenCTM().inverse());
-      n.px = p.x; n.py = p.y;
-      place();
-    };
-    const up = () => {
-      n.el.removeEventListener("pointermove", move);
-      n.el.removeEventListener("pointerup", up);
-    };
-    n.el.addEventListener("pointermove", move);
-    n.el.addEventListener("pointerup", up);
-  });
-}
-
-// ---------- table ----------
-
-function renderTable(host, events) {
-  const start = state.data.session.started_at;
-  const rows = events.filter((e) => !state.catFilter || e.category === state.catFilter);
-  const kindLabel = { prompt: "Prompt", session_start: "Session", session_end: "Session", stop: "Turn end",
-    subagent: "Subagent", compact: "Compaction", notification: "Notification", interrupt: "Interrupt", permission: "Permission" };
-  host.replaceChildren(
-    h("div", { class: "table-wrap" },
-      h("table", {},
-        h("thead", {}, h("tr", {}, ...["Time", "+", "Type", "Tool", "Target", "Duration", "Status"].map((t) => h("th", {}, t)))),
-        h("tbody", {},
-          ...rows.map((e) =>
-            h("tr", { onclick: () => openEvent(e.id) },
-              h("td", { class: "num" }, fmtClock(e.started_at)),
-              h("td", { class: "num", style: "color:var(--muted)" }, fmtDur((e.started_at - start) * 1000)),
-              h("td", {}, e.kind === "tool_call"
-                ? h("span", { class: "status" }, swatch(e.category), CATS[e.category] || e.category)
-                : kindLabel[e.kind] || e.kind),
-              h("td", {}, e.tool_name || ""),
-              h("td", { class: "target", title: e.target || e.summary || "" }, e.target || (e.kind !== "tool_call" ? e.summary : "") || ""),
-              h("td", { class: "num" }, e.kind === "tool_call" ? fmtDur(e.duration_ms) : ""),
-              h("td", {}, e.kind === "tool_call" ? statusLabel(e.status) : "")))))),
-  );
-}
-
-// ---------- summary cards ----------
-
-function renderSummary(sum) {
-  const card = (title, items, total, cat) => {
-    const max = Math.max(1, ...items.map((i) => i.count));
-    return h("div", { class: "card" },
-      h("h3", {}, title, h("span", {}, total != null ? `${total} total` : "")),
-      items.length
-        ? h("ul", { class: "rank" }, ...items.map((i) =>
-            h("li", { title: i.name },
-              h("span", { class: "name" }, i.name),
-              h("span", { class: "count" }, i.count),
-              h("div", { class: "bar" }, h("div", { style: `width:${(100 * i.count) / max}%;background:${catColor(cat)}` })))))
-        : h("div", { class: "rank-empty" }, "None"));
-  };
-  return h("div", { class: "summary" },
-    card("Files changed", sum.files_written, sum.files_written_total, "file_write"),
-    card("Files read", sum.files_read, sum.files_read_total, "file_read"),
-    card("Commands", sum.commands, null, "bash"),
-    card("MCP servers", sum.mcp_servers, null, "mcp"));
-}
-
-// ---------- event drawer ----------
-
 const drawer = document.getElementById("drawer");
-
-async function openEvent(id) {
-  hideTip();
-  const e = await api(`/api/events/${id}`);
-  const d = e.detail || {};
-  const pre = (v) => h("pre", {}, typeof v === "string" ? v : JSON.stringify(v, null, 2));
-  const rows = [
-    ["Type", e.kind === "tool_call" ? h("span", { class: "status" }, swatch(e.category), CATS[e.category] || e.category) : e.kind],
-    ["Tool", e.tool_name],
-    ["Target", e.target],
-    ["Started", `${fmtClock(e.started_at)} (${new Date(e.started_at * 1000).toLocaleDateString()})`],
-    ["Duration", e.kind === "tool_call" ? fmtDur(e.duration_ms) : null],
-    ["Status", e.kind === "tool_call" ? statusLabel(e.status) : null],
-    ["Source", e.source === "transcript" ? "Transcript (no hook for this tool)" : null],
-    ["Tool use id", e.tool_use_id],
-  ].filter(([, v]) => v != null && v !== "");
-  document.getElementById("drawer-title").textContent = e.kind === "tool_call" ? e.tool_name : e.summary || e.kind;
-  setChildren(
-    document.getElementById("drawer-body"),
-    h("dl", {}, ...rows.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])),
-    e.files.length ? h("h3", {}, "Files") : null,
-    e.files.length ? pre(e.files.map((f) => `${f.op.padEnd(6)} ${f.path}`).join("\n")) : null,
-    d.prompt ? h("h3", {}, "Prompt") : null,
-    d.prompt ? pre(d.prompt) : null,
-    d.input !== undefined ? h("h3", {}, "Input") : null,
-    d.input !== undefined ? pre(d.input) : null,
-    d.error ? h("h3", {}, "Error") : null,
-    d.error ? pre(d.error) : null,
-    d.response != null ? h("h3", {}, "Response (excerpt)") : null,
-    d.response != null ? pre(d.response) : null,
-    e.kind !== "tool_call" && !d.prompt && Object.keys(d).length ? h("h3", {}, "Payload") : null,
-    e.kind !== "tool_call" && !d.prompt && Object.keys(d).length ? pre(d) : null,
-  );
-  drawer.setAttribute("aria-hidden", "false");
-}
-
 document.getElementById("drawer-close").addEventListener("click", () => drawer.setAttribute("aria-hidden", "true"));
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") drawer.setAttribute("aria-hidden", "true"); });
 
@@ -789,21 +758,21 @@ document.querySelectorAll("#agent-filter button").forEach((b) => {
   b.addEventListener("click", () => {
     state.agent = b.dataset.agent;
     document.querySelectorAll("#agent-filter button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-    const q = state.agent ? `?agent=${state.agent}` : "";
+    const q = new URLSearchParams(location.search);
+    if (state.agent) q.set("agent", state.agent);
+    else q.delete("agent");
     state.current = null;
-    history.replaceState(null, "", `${location.pathname}${q}`);
+    history.replaceState(null, "", `${location.pathname}${q.toString() ? `?${q}` : ""}`);
     loadSessions();
   });
 });
 document.getElementById("filter").addEventListener("input", renderSessionList);
+document.getElementById("empty-toggle").addEventListener("click", () => {
+  state.showEmpty = !state.showEmpty;
+  renderSessionList();
+});
 document.getElementById("refresh").addEventListener("click", () => refresh(true));
 window.addEventListener("hashchange", () => { const id = location.hash.slice(1); if (id && id !== state.current) openSession(id); });
-
-let resizeTimer;
-window.addEventListener("resize", () => {
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => state.data && renderMain(), 150);
-});
 
 async function refresh(force) {
   const before = state.sessions.find((x) => x.id === state.current);
@@ -812,12 +781,14 @@ async function refresh(force) {
   const changed = before && after && (before.ended_at !== after.ended_at || before.tool_call_count !== after.tool_call_count);
   if (state.current && (force || changed)) {
     state.data = await api(`/api/sessions/${encodeURIComponent(state.current)}`);
+    state.turns = buildTurns(state.data.events);
     renderMain();
   }
 }
 
 setInterval(() => {
-  if (document.getElementById("live").checked && !document.hidden && drawer.getAttribute("aria-hidden") === "true") refresh(false);
+  const typing = document.activeElement?.matches?.("#main input, #main select");
+  if (document.getElementById("live").checked && !document.hidden && !typing && drawer.getAttribute("aria-hidden") === "true") refresh(false);
 }, 5000);
 
 loadSessions().catch((err) => {

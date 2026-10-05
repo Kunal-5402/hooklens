@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>hooklens</title>
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -18,13 +19,14 @@
     </div>
     <div class="topbar-right">
       <label class="live"><input type="checkbox" id="live" checked> Live</label>
-      <button id="refresh" class="btn">Refresh</button>
+      <button id="refresh" class="btn" type="button">Refresh</button>
     </div>
   </header>
   <div class="layout">
     <aside id="session-sidebar" class="sidebar">
       <input id="filter" class="input" type="search" placeholder="Filter sessions" aria-label="Filter sessions">
       <ul id="session-list" class="session-list"></ul>
+      <button id="empty-toggle" class="link-btn" type="button" hidden></button>
     </aside>
     <main id="main" class="main">
       <div class="empty">Loading…</div>
@@ -33,7 +35,7 @@
   <aside id="drawer" class="drawer" aria-hidden="true">
     <div class="drawer-head">
       <h2 id="drawer-title">Event</h2>
-      <button id="drawer-close" class="btn" aria-label="Close">Close</button>
+      <button id="drawer-close" class="btn" type="button" aria-label="Close">Close</button>
     </div>
     <div id="drawer-body" class="drawer-body"></div>
   </aside>

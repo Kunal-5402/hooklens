@@ -54,8 +54,7 @@ def test_claude_session_end_to_end(conn, send):
     detail = queries.session_detail(conn, "s1")
     assert detail["summary"]["files_read"] == [{"name": "a.py", "count": 1}]
     assert detail["summary"]["commands"] == [{"name": "pytest", "count": 1}]
-    ids = {n["id"] for n in detail["graph"]["nodes"]}
-    assert {"session", "hub:file_read", "hub:bash", "hub:mcp", "file:a.py", "mcp-server:notion"} <= ids
+    assert [(f["path"], f["op"]) for f in detail["files"]] == [("a.py", "read")]
 
 
 def test_post_before_pre_and_missing_ids(conn, send):

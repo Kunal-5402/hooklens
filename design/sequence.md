@@ -51,8 +51,8 @@ sequenceDiagram
     Server-->>Browser: session list
     Browser->>Server: GET /api/sessions/{id}
     Server->>DB: read events and files
-    Server-->>Browser: events, summary, and graph
-    Browser->>Browser: draw the timeline, graph, and event table
+    Server-->>Browser: events, files, and summary
+    Browser->>Browser: group events into turns, then draw the trace
     opt click an event
         Browser->>Server: GET /api/events/{id}
         Server-->>Browser: input, response excerpt, and files
