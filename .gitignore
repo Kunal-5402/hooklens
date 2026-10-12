@@ -4,3 +4,4 @@ __pycache__/
 dist/
 .pytest_cache/
 plan.md
+.DS_Store
