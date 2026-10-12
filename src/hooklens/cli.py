@@ -7,6 +7,7 @@ hooklens <agent> clear                              (delete one agent's recorded
 hooklens show | sessions | ingest | doctor
 hooklens clear                                      (delete all recorded data, keep hooks)
 hooklens uninstall [--purge]                        (remove hooks; --purge also deletes data)
+hooklens policy set|show|test|remove                (a webhook that can allow, deny, or ask)
 """
 
 import argparse
@@ -72,6 +73,27 @@ def build_parser() -> argparse.ArgumentParser:
     _sessions_args(sub.add_parser("sessions", help="list recent sessions")).set_defaults(func=cmd_sessions, agent=None)
     sub.add_parser("ingest", help="normalize pending hook events now").set_defaults(func=cmd_ingest)
     sub.add_parser("doctor", help="check hooks, database, and recent events").set_defaults(func=cmd_doctor)
+
+    pp = sub.add_parser("policy", help="ask a policy webhook to allow, deny, or ask before tool calls and prompts")
+    psub = pp.add_subparsers(dest="action", required=True, metavar="<action>")
+    ps = psub.add_parser("set", help="set the policy webhook")
+    ps.add_argument("url", help="the webhook URL; hooklens sends it a POST request with JSON")
+    ps.add_argument("--timeout", type=float, default=2.0, help="seconds to wait for a decision (default 2, max 8)")
+    ps.add_argument("--fail-closed", action="store_true", help="deny when the webhook fails (default: allow)")
+    ps.add_argument(
+        "--header",
+        action="append",
+        default=[],
+        metavar="'NAME: VALUE'",
+        help="an HTTP header to send; ${VAR} in the value reads an environment variable",
+    )
+    ps.add_argument("--no-prompts", action="store_true", help="check tool calls only, not prompts")
+    ps.set_defaults(func=cmd_policy_set)
+    psub.add_parser("show", help="show the policy webhook").set_defaults(func=cmd_policy_show)
+    pt = psub.add_parser("test", help="send a test tool call to the webhook and show the decision")
+    pt.add_argument("--command", default="rm -rf ./build", help="the shell command in the test call")
+    pt.set_defaults(func=cmd_policy_test)
+    psub.add_parser("remove", help="remove the policy webhook").set_defaults(func=cmd_policy_remove)
     return parser
 
 
@@ -184,6 +206,8 @@ def cmd_uninstall(args) -> int:
             if n:
                 lines.append(f"{n} recorded {AGENT_NAMES[args.agents[0]]} session(s) from {paths.db_path()}")
         lines += [f"{b} (config backup made by hooklens)" for a in args.agents for b in install.backups(a)]
+        if args.every_agent and paths.policy_config().exists():
+            lines.append(f"{paths.policy_config()} (policy webhook)")
     if not lines:
         print("Nothing to remove.")
         return 0
@@ -196,6 +220,9 @@ def cmd_uninstall(args) -> int:
             print(f"{AGENT_NAMES[agent]}: removed {count} hook(s) from {path}" + (" and deleted it" if deleted else ""))
     if args.purge:
         if args.every_agent:
+            from hooklens import policy
+
+            policy.remove()
             cleanup.delete_data()
         else:
             cleanup.delete_agent_data(args.agents[0])
@@ -321,7 +348,7 @@ def cmd_doctor(args) -> int:
     for agent in AGENTS:
         name = AGENT_NAMES[agent]
         events = install.installed_events(agent)
-        missing = [e for e in install.EVENTS[agent] if e not in events]
+        missing = [e for e in install.events(agent) if e not in events]
         state = "installed" if events and not missing else "partial" if events else "not installed"
         print(f"{name}: hooks {state} ({install.config_path(agent)})")
         if events and missing:
@@ -334,7 +361,122 @@ def cmd_doctor(args) -> int:
             print("  no events received yet. Start a new session of the agent.")
     python = sys.executable
     print(f"Hook interpreter: {python} ({'ok' if os.access(python, os.X_OK) else 'MISSING'})")
+    from hooklens import policy
+
+    try:
+        cfg = policy.load()
+        print(f"Policy webhook: {_policy_summary(cfg) if cfg else 'not set'}")
+    except (OSError, ValueError) as exc:
+        print(f"Policy webhook: BROKEN ({exc}). Every checked event is denied. Run `hooklens policy set` again.")
+        ok = False
     if paths.error_log().exists() and paths.error_log().stat().st_size:
         print(f"Errors were logged: {paths.error_log()}")
         ok = False
     return 0 if ok else 1
+
+
+# ---------- policy ----------
+
+
+def _policy_summary(cfg: dict) -> str:
+    from hooklens import policy
+
+    on_error = "deny (fail closed)" if policy.on_error(cfg) == "deny" else "allow (fail open)"
+    prompts = "tool calls and prompts" if cfg.get("prompts", True) else "tool calls only"
+    return f"{cfg['url']} (timeout {policy.timeout(cfg):g}s, on error: {on_error}, checks: {prompts})"
+
+
+def _refresh_policy_hooks() -> None:
+    """Some agents need extra hook events for a policy. Update the agents that have hooklens hooks."""
+    from hooklens import install
+
+    for agent in AGENTS:
+        if install.POLICY_EVENTS[agent] and install.installed_events(agent):
+            path, _ = install.install(agent)
+            print(f"{AGENT_NAMES[agent]}: hook events updated in {path}")
+
+
+def cmd_policy_set(args) -> int:
+    from hooklens import policy
+
+    headers = {}
+    for header in args.header:
+        name, sep, value = header.partition(":")
+        if not sep or not name.strip():
+            print(f"Header must look like 'Name: value': {header}", file=sys.stderr)
+            return 1
+        headers[name.strip()] = value.strip()
+    try:
+        cfg = policy.make_config(args.url, args.timeout, args.fail_closed, headers, not args.no_prompts)
+    except ValueError as exc:
+        print(f"Cannot set the policy: {exc}", file=sys.stderr)
+        return 1
+    policy.save(cfg)
+    print(f"Policy webhook set: {_policy_summary(cfg)}")
+    if any(not policy.ENV_REF.search(v) for v in headers.values()):
+        print("  Note: header values are stored in plain text. Use ${VAR} to read a secret from the environment.")
+    _refresh_policy_hooks()
+    print("Run `hooklens policy test` to check the webhook. New and running agent sessions use it at once.")
+    return 0
+
+
+def cmd_policy_show(args) -> int:
+    from hooklens import paths, policy
+
+    try:
+        cfg = policy.load()
+    except (OSError, ValueError) as exc:
+        print(f"Policy config is broken: {exc}", file=sys.stderr)
+        return 1
+    if not cfg:
+        print("No policy webhook. Set one with `hooklens policy set <url>`.")
+        return 0
+    print(f"Policy webhook: {_policy_summary(cfg)}")
+    print(f"  config: {paths.policy_config()}")
+    for name, value in (cfg.get("headers") or {}).items():
+        shown = value if policy.ENV_REF.fullmatch(value) else "<hidden>"
+        print(f"  header: {name}: {shown}")
+    return 0
+
+
+def cmd_policy_test(args) -> int:
+    from hooklens import policy
+
+    try:
+        cfg = policy.load()
+    except (OSError, ValueError) as exc:
+        print(f"Policy config is broken: {exc}", file=sys.stderr)
+        return 1
+    if not cfg:
+        print("No policy webhook. Set one with `hooklens policy set <url>`.", file=sys.stderr)
+        return 1
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "hooklens-test",
+        "cwd": os.getcwd(),
+        "tool_name": "Bash",
+        "tool_use_id": "hooklens-test",
+        "tool_input": {"command": args.command},
+    }
+    request = policy.build_request("claude", "tool", payload) | {"test": True}
+    print(f"POST {cfg['url']}  (Bash: {args.command})")
+    result = policy.decide(cfg, request)
+    if result["source"] == "error":
+        print(f"Failed after {result['ms']} ms: {result['error']}")
+        print(f"In an agent, this call would be: {result['decision']}")
+        return 1
+    print(f"Decision: {result['decision']}  ({result['ms']} ms)")
+    if result["reason"]:
+        print(f"Reason: {result['reason']}")
+    return 0
+
+
+def cmd_policy_remove(args) -> int:
+    from hooklens import policy
+
+    if not policy.remove():
+        print("No policy webhook to remove.")
+        return 0
+    print("Policy webhook removed. Tool calls and prompts are no longer checked.")
+    _refresh_policy_hooks()
+    return 0

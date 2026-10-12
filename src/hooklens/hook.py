@@ -4,6 +4,9 @@ It reads the payload from stdin, trims large strings, inserts one raw row, and e
 Claude Code and Codex read hook stdout as instructions, so the hook prints nothing for them.
 Cursor reads stdout as JSON for every event and can block an action on empty output, so the
 hook always answers Cursor with a reply that changes nothing.
+
+The exception is a configured policy (see policy.py): for a "before" event, the hook asks the
+policy engine first, stores its decision with the event, and prints the decision for the agent.
 """
 
 import json
@@ -55,7 +58,7 @@ def _event_name(raw: bytes) -> str | None:
     return payload.get("hook_event_name") if isinstance(payload, dict) else None
 
 
-def record(agent: str, raw: bytes) -> None:
+def record(agent: str, raw: bytes, decision: dict | None = None) -> None:
     limit = max_field()
     try:
         payload = json.loads(raw)
@@ -64,6 +67,10 @@ def record(agent: str, raw: bytes) -> None:
     if not isinstance(payload, dict):
         payload = {"_value": payload}
     payload.pop("user_email", None)  # Cursor sends it on every event; hooklens does not need it.
+    if decision:
+        from hooklens.policy import KEY
+
+        payload[KEY] = decision
     payload = truncate(payload, limit)
     conn = db.connect()
     try:
@@ -76,20 +83,40 @@ def record(agent: str, raw: bytes) -> None:
         conn.close()
 
 
+def _log_error(agent: str) -> None:
+    try:
+        paths.error_log().parent.mkdir(parents=True, exist_ok=True)
+        with open(paths.error_log(), "a") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} hook {agent}\n{traceback.format_exc()}\n")
+    except OSError:
+        pass
+
+
 def run(agent: str) -> int:
     raw = b""
+    checked = None
     try:
         raw = sys.stdin.buffer.read()
-        record(agent, raw)
+        if paths.policy_config().exists():  # a stat only, so the hook stays fast without a policy
+            from hooklens import policy
+
+            checked = policy.check(agent, raw)
     except Exception:
-        try:
-            paths.error_log().parent.mkdir(parents=True, exist_ok=True)
-            with open(paths.error_log(), "a") as fh:
-                fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} hook {agent}\n{traceback.format_exc()}\n")
-        except OSError:
-            pass
+        _log_error(agent)
+    try:
+        if raw:
+            record(agent, raw, checked[1] if checked else None)
+    except Exception:
+        _log_error(agent)
     finally:
-        if agent == "cursor":
-            sys.stdout.write(CURSOR_REPLIES.get(_event_name(raw), "{}"))
+        out = None
+        if checked:
+            from hooklens import policy
+
+            out = policy.reply(agent, *checked)
+        elif agent == "cursor":
+            out = CURSOR_REPLIES.get(_event_name(raw), "{}")
+        if out is not None:
+            sys.stdout.write(out)
             sys.stdout.flush()
     return 0

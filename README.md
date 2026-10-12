@@ -40,6 +40,8 @@ UI is a local web page. **Nothing leaves your machine.**
 - **Tokens and model** from the agent's transcript.
 - **Live view** that updates while the agent works.
 - **One view for three agents.** Claude Code, Codex, and Cursor events are normalized to one schema.
+- **Policy webhook** (optional). Your policy engine can allow, deny, or ask before a tool call or a
+  prompt, with 1 request format for all 3 agents. Every decision is stored and shown in the trace.
 
 ## Supported agents
 
@@ -75,7 +77,9 @@ To install one agent at a time, use `hooklens claude install`, `hooklens codex i
 | `hooklens doctor` | Check the hooks, the database, and recent events |
 | `hooklens clear` | Delete all recorded data (the hooks stay) |
 | `hooklens uninstall` | Remove the hooks (your other hooks and settings stay) |
-| `hooklens uninstall --purge` | Remove the hooks, the data, and the config backups |
+| `hooklens uninstall --purge` | Remove the hooks, the data, the config backups, and the policy |
+| `hooklens policy set <url>` | Ask a policy webhook before tool calls and prompts ([details](design/policy.md)) |
+| `hooklens policy test` | Send a test tool call to the webhook and show the decision |
 
 Commands that delete data ask first. Add `--dry-run` to see what would be removed, or `--yes` to
 skip the question.
@@ -98,18 +102,36 @@ agent ──hook event (JSON)──> hooklens hook ──> SQLite (raw events)
 ```
 
 1. **Capture.** The agent runs `hooklens <agent> hook` on each event. The hook stores the raw
-   event and exits in about 30 ms. It never blocks or changes what the agent does.
+   event and exits in about 30 ms. Without a policy webhook, it never blocks or changes what the agent does.
 2. **Normalize.** When you open the UI, hooklens maps each agent's events to one schema, pairs tool
    starts with their results, and reads token usage from the agent's transcript.
 3. **View.** A small server on `127.0.0.1` serves the UI and a JSON API.
 
-hooklens only uses hooks that report what happened. It never subscribes to hooks that can allow or
-block an action. Read [design/architecture.md](design/architecture.md) for the details and
+Without a policy, hooklens never changes what the agent does. Read
+[design/architecture.md](design/architecture.md) for the details and
 [design/sequence.md](design/sequence.md) for the full call flow.
+
+## Policy webhook
+
+A policy engine can allow, deny, or ask before an agent runs a tool or sends a prompt. hooklens
+sends 1 JSON request with the same fields for every agent, and gives each agent the decision in the
+form that it expects.
+
+```sh
+python examples/policy_server.py                  # a small example engine on 127.0.0.1:8787
+hooklens policy set http://127.0.0.1:8787/check   # --fail-closed, --timeout, --header 'Authorization: Bearer ${TOKEN}'
+hooklens policy test --command "rm -rf ~"         # Decision: deny (5 ms)
+```
+
+The engine answers `{"decision": "allow" | "deny" | "ask", "reason": "..."}`. `allow` means "no
+objection", so the agent's own permission rules still apply. Denied calls show as "Blocked" in the
+trace. Read [design/policy.md](design/policy.md) for the request format and for how each agent
+handles each decision.
 
 ## Privacy and safety
 
-- All data is in `~/.hooklens/hooklens.db`. Nothing is sent over the network.
+- All data is in `~/.hooklens/hooklens.db`. Nothing is sent over the network, unless you set a
+  policy webhook: then each checked tool call or prompt goes to that URL.
 - Each string is trimmed to 4096 characters before it is stored, so full file contents and long
   outputs are not kept. Set `HOOKLENS_MAX_FIELD` to change the limit (`0` keeps everything).
 - Cursor sends your account email with each event. hooklens removes it before storage.
@@ -129,8 +151,8 @@ block an action. Read [design/architecture.md](design/architecture.md) for the d
 ## Roadmap
 
 See the [milestones](https://github.com/Kunal-5402/hooklens/milestones): the first PyPI release,
-importing past sessions, cost estimates, OpenTelemetry and SIEM export, and policy hooks for
-security tools.
+importing past sessions, cost estimates, OpenTelemetry and SIEM export, and a local daemon for
+faster policy checks.
 
 ## Contributing
 

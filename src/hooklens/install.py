@@ -47,7 +47,7 @@ EVENTS = {
         "Interrupt",
     ],
     # Only events that report what happened. Cursor lets permission events (preToolUse, beforeShellExecution,
-    # beforeReadFile, ...) block an action, so hooklens never subscribes to them.
+    # beforeReadFile, ...) block an action, so hooklens subscribes to them only for a policy (POLICY_EVENTS).
     "cursor": [
         "sessionStart",
         "sessionEnd",
@@ -59,10 +59,17 @@ EVENTS = {
         "stop",
     ],
 }
+# Claude Code and Codex already send PreToolUse and UserPromptSubmit. Cursor needs its permission event.
+POLICY_EVENTS = {"claude": [], "codex": [], "cursor": ["preToolUse"]}
 TOOL_EVENTS = {"PreToolUse", "PostToolUse", "PostToolUseFailure"}
 # Codex caps these events at 3 seconds.
 SHORT_EVENTS = {"SessionEnd", "Interrupt"}
 MARKER = re.compile(r"-m hooklens (claude|codex|cursor) hook\b")
+
+
+def events(agent: str) -> list[str]:
+    """The events to install: the policy events too, if a policy is set."""
+    return EVENTS[agent] + (POLICY_EVENTS[agent] if paths.policy_config().exists() else [])
 
 
 def config_path(agent: str) -> Path:
@@ -168,10 +175,10 @@ def add_hooks(config: dict, agent: str) -> None:
     command = hook_command(agent)
     if agent == "cursor":
         config.setdefault("version", 1)
-        for event in EVENTS[agent]:
+        for event in events(agent):
             hooks.setdefault(event, []).append({"command": command, "timeout": 10})
         return
-    for event in EVENTS[agent]:
+    for event in events(agent):
         entry = {"type": "command", "command": command, "timeout": 3 if event in SHORT_EVENTS else 10}
         group = {"matcher": "*", "hooks": [entry]} if event in TOOL_EVENTS else {"hooks": [entry]}
         hooks.setdefault(event, []).append(group)

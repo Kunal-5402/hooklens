@@ -11,6 +11,7 @@ import traceback
 from hooklens import paths, transcripts
 from hooklens.adapters import classify, excerpt, response_status
 from hooklens.hook import session_key
+from hooklens.policy import KEY as POLICY_KEY
 
 BATCH = 2000
 
@@ -88,7 +89,8 @@ def _apply(conn: sqlite3.Connection, row: sqlite3.Row, touched: set[str]) -> Non
         _tool_end(conn, sid, agent, p, ts, event)
     elif event == "UserPromptSubmit":
         prompt = p.get("prompt") or ""
-        _point(conn, sid, agent, "prompt", ts, prompt.strip()[:300], {"prompt": prompt})
+        detail, status = _with_policy({"prompt": prompt}, p)
+        _point(conn, sid, agent, "prompt", ts, prompt.strip()[:300], detail, status)
     else:
         kind = POINT_EVENTS.get(event, "other")
         _point(conn, sid, agent, kind, ts, _point_summary(event, p), _point_detail(p))
@@ -125,6 +127,7 @@ def _point_detail(p: dict) -> dict:
         "workspace_roots",
         "cursor_version",
         "model_params",
+        POLICY_KEY,
     }
     return {k: v for k, v in p.items() if k not in skip}
 
@@ -148,12 +151,21 @@ def _cwd(p: dict) -> str | None:
     return p.get("cwd") or (roots[0] if isinstance(roots, list) and roots else None)
 
 
-def _point(conn, sid, agent, kind, ts, summary, detail) -> None:
+def _point(conn, sid, agent, kind, ts, summary, detail, status=None) -> None:
     conn.execute(
-        "INSERT INTO events(session_id, agent, kind, started_at, ended_at, summary, detail)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (sid, agent, kind, ts, ts, summary, json.dumps(detail)),
+        "INSERT INTO events(session_id, agent, kind, started_at, ended_at, summary, detail, status)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (sid, agent, kind, ts, ts, summary, json.dumps(detail), status),
     )
+
+
+def _with_policy(detail: dict, p: dict, status: str | None = None) -> tuple[dict, str | None]:
+    """Add the policy decision to an event. A denied event is blocked: it never runs."""
+    decision = p.get(POLICY_KEY)
+    if not isinstance(decision, dict):
+        return detail, status
+    blocked = (decision.get("applied") or decision.get("decision")) == "deny"
+    return detail | {"policy": decision}, "blocked" if blocked else status
 
 
 def _summary(tool_name, target) -> str:
@@ -179,10 +191,12 @@ def _tool_detail(p: dict) -> dict:
 def _tool_start(conn, sid, agent, p, ts) -> None:
     name, tuid = p.get("tool_name"), p.get("tool_use_id")
     info = classify(name, p.get("tool_input"))
+    detail, status = _with_policy(_tool_detail(p), p, "running")
+    ended, duration = (ts, 0) if status == "blocked" else (None, None)
     cur = conn.execute(
         "INSERT OR IGNORE INTO events(session_id, agent, kind, category, tool_name, tool_use_id,"
-        " started_at, status, target, summary, detail)"
-        " VALUES (?, ?, 'tool_call', ?, ?, ?, ?, 'running', ?, ?, ?)",
+        " started_at, ended_at, duration_ms, status, target, summary, detail)"
+        " VALUES (?, ?, 'tool_call', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             sid,
             agent,
@@ -190,9 +204,12 @@ def _tool_start(conn, sid, agent, p, ts) -> None:
             name,
             tuid,
             ts,
+            ended,
+            duration,
+            status,
             info.target,
             _summary(name, info.target),
-            json.dumps(_tool_detail(p)),
+            json.dumps(detail),
         ),
     )
     if cur.rowcount == 0:  # The Post row arrived first.

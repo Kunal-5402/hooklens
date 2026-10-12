@@ -14,7 +14,8 @@ const CATS = {
 const ORDER = Object.keys(CATS);
 const AGENT_NAMES = { claude: "Claude Code", codex: "Codex", cursor: "Cursor" };
 const AGENT_SHORT = { claude: "Claude", codex: "Codex", cursor: "Cursor" };
-const STATUS = { ok: "OK", error: "Error", running: "No result", interrupted: "Interrupted" };
+const STATUS = { ok: "OK", error: "Error", running: "No result", interrupted: "Interrupted", blocked: "Blocked" };
+const PROBLEMS = new Set(["error", "blocked"]);
 const KIND_LABELS = {
   prompt: "Prompt",
   stop: "Turn end",
@@ -241,7 +242,8 @@ function buildTurns(events) {
     const start = Math.min(...points);
     const end = Math.max(...points);
     return { ...t, index: i + 1, key: `turn:${i}`, calls, segs, start, end,
-      errors: calls.filter((e) => e.status === "error").length, active: activeMs(segs), wall: (end - start) * 1000 };
+      errors: calls.filter((e) => e.status === "error").length, blocked: t.events.filter((e) => e.status === "blocked").length,
+      active: activeMs(segs), wall: (end - start) * 1000 };
   });
 }
 
@@ -271,6 +273,7 @@ const hideTip = () => tip.classList.remove("show");
 
 const statusText = (st) => h("span", { class: `status ${st}` }, STATUS[st] || st);
 const errBadge = (n) => h("span", { class: "badge-err" }, n === 1 ? "1 error" : `${n} errors`);
+const blockedBadge = (n) => h("span", { class: "badge-err", title: "Blocked by the policy webhook" }, `${n} blocked`);
 
 // ---------- sessions ----------
 
@@ -364,6 +367,7 @@ function renderMain() {
   const tokensIn = se.input_tokens + se.cache_read_tokens + se.cache_write_tokens;
   const cachePct = tokensIn ? Math.round((100 * se.cache_read_tokens) / tokensIn) : 0;
   const title = sessionTitle(se);
+  const blocked = events.filter((e) => e.status === "blocked").length;
 
   const stat = (label, value, note, opts = {}) => h(opts.onclick ? "button" : "div",
     { class: `stat${opts.bad ? " bad" : ""}`, type: opts.onclick ? "button" : null, onclick: opts.onclick, title: opts.title },
@@ -389,8 +393,8 @@ function renderMain() {
       stat("Active time", fmtDur(active), `of ${fmtDur(wallMs)} in total`,
         { title: "Time with agent activity. A gap of more than 5 minutes between events counts as idle." }),
       stat("Tool calls", fmtNum(se.tool_call_count), plural(se.prompt_count, "prompt")),
-      stat("Errors", fmtNum(se.error_count), se.error_count ? "Show in events" : "None",
-        { bad: se.error_count > 0, onclick: se.error_count ? showErrors : null }),
+      stat("Errors", fmtNum(se.error_count), blocked ? `${fmtNum(blocked)} blocked by policy` : se.error_count ? "Show in events" : "None",
+        { bad: se.error_count > 0, onclick: se.error_count + blocked ? showErrors : null }),
       stat("Files changed", fmtNum(summary.files_written_total), `${fmtNum(summary.files_read_total)} read`),
       stat("Tokens", fmtNum(tokensIn + se.output_tokens), `${cachePct}% cache reads`)),
     h("div", { class: "tabs", role: "tablist", "aria-label": "Session views" },
@@ -443,9 +447,10 @@ function turnRow(t, maxActive) {
     type: "button", "aria-expanded": String(open), "data-key": t.key, onclick: toggle },
     h("span", { class: "tr-chev" }, iconSvg("chevron", 14)),
     h("span", { class: "tr-time num" }, fmtTime(t.start)),
-    h("span", { class: "tr-title" }, t.system ? h("span", { class: "tag" }, "system") : null, h("span", { class: "tr-text" }, t.title)),
+    h("span", { class: "tr-title" }, t.system ? h("span", { class: "tag" }, "system") : null,
+      t.prompt?.status === "blocked" ? h("span", { class: "tag bad" }, "blocked") : null, h("span", { class: "tr-text" }, t.title)),
     h("span", { class: "tr-calls num" }, t.calls.length || ""),
-    h("span", { class: "tr-err" }, t.errors ? errBadge(t.errors) : null),
+    h("span", { class: "tr-err" }, t.errors ? errBadge(t.errors) : t.blocked ? blockedBadge(t.blocked) : null),
     h("span", { class: "tr-dur num", title: t.wall - t.active >= 1000 ? `${fmtDur(t.wall)} with idle time` : null }, fmtDur(t.active)),
     h("span", { class: "tr-meter", "aria-hidden": "true" }, h("span", { style: `width:${Math.max(2, (100 * t.active) / maxActive)}%` })));
 }
@@ -479,7 +484,7 @@ function childRow(t, e, x, gapLines) {
     h("span", { class: "tr-off num" }, `+${fmtDur((e.started_at - t.start) * 1000)}`),
     h("span", { class: "tr-tool" }, isCall ? swatch(e.category) : h("span", { class: "pt-dot" }),
       h("span", { class: "tr-text" }, isCall ? prettyTool(e.tool_name) || CATS[e.category] : KIND_LABELS[e.kind] || e.kind)),
-    h("span", { class: "tr-target" }, e.status === "error" ? h("span", { class: "badge-err" }, "Error")
+    h("span", { class: "tr-target" }, PROBLEMS.has(e.status) ? h("span", { class: "badge-err" }, STATUS[e.status])
       : isCall && e.status !== "ok" ? h("span", { class: "badge-muted" }, STATUS[e.status] || e.status) : null,
       h("span", { class: "tr-text mono" }, firstLine(label))),
     h("span", { class: "tr-dur num" }, isCall ? fmtDur(e.duration_ms) : ""),
@@ -547,7 +552,8 @@ function turnDetail(t) {
       dlRow("Active time", fmtDur(t.active)),
       dlRow("Total time", t.wall - t.active >= 1000 ? fmtDur(t.wall) : null),
       dlRow("Tool calls", String(t.calls.length)),
-      dlRow("Errors", t.errors ? h("span", { class: "status error" }, String(t.errors)) : "0")),
+      dlRow("Errors", t.errors ? h("span", { class: "status error" }, String(t.errors)) : "0"),
+      dlRow("Blocked", t.blocked ? h("span", { class: "status blocked" }, String(t.blocked)) : null)),
     t.calls.length ? section("Time by activity", categoryShare(t.calls)) : null,
     section("Prompt", promptBox),
     files.length ? section(`Files (${files.length})`, fileList(files)) : null);
@@ -580,11 +586,25 @@ function eventDetail(e) {
     e.target && d.input === undefined ? section("Target", h("pre", {}, shorten(e.target, cwd))) : null,
     e.files.length ? section(`Files (${e.files.length})`,
       fileList(aggregateFiles(e.files.map((f) => ({ path: shorten(f.path, cwd), op: f.op }))))) : null,
+    d.policy ? policySection(d.policy) : null,
     block("Error", d.error, "err"),
     block("Prompt", d.prompt),
     d.input !== undefined ? section("Input", inputView(d.input)) : null,
     block("Response (excerpt)", d.response),
     !isCall && !d.prompt && Object.keys(d).length ? block("Payload", d) : null);
+}
+
+const DECISION_TEXT = { allow: "Allowed", deny: "Denied", ask: "Asked for approval" };
+
+function policySection(p) {
+  const applied = p.applied || p.decision;
+  return section("Policy",
+    h("dl", { class: "d-grid num" },
+      dlRow("Decision", h("span", { class: `status ${applied === "deny" ? "blocked" : ""}` }, DECISION_TEXT[applied] || applied)),
+      dlRow("Engine said", applied !== p.decision ? DECISION_TEXT[p.decision] || p.decision : null),
+      dlRow("Reason", p.reason),
+      dlRow("Time", p.ms != null ? `${p.ms}ms` : null),
+      dlRow("Webhook", p.source === "error" ? h("span", { class: "status error" }, p.error || "Failed") : null)));
 }
 
 async function selectEvent(id) {
@@ -683,7 +703,7 @@ function renderEvents() {
     h("option", { value: "", selected: !state.catFilter }, "All categories"),
     ...cats.map((c) => h("option", { value: c, selected: state.catFilter === c }, CATS[c])));
   const errors = h("label", { class: "check" }, h("input", { type: "checkbox", checked: state.errorsOnly,
-    onchange: (e) => { state.errorsOnly = e.target.checked; update(); } }), "Errors only");
+    onchange: (e) => { state.errorsOnly = e.target.checked; update(); } }), "Errors and blocked");
   update();
   return h("section", { class: "card events" }, h("div", { class: "toolbar" }, search, select, errors, count), host);
 }
@@ -695,7 +715,7 @@ function renderEventTable(host, count) {
   const q = state.query.trim().toLowerCase();
   const text = (e) => (e.kind === "prompt" ? cleanPrompt(e.summary).title : shorten(e.target || (e.kind !== "tool_call" ? e.summary : "") || "", cwd));
   const rows = events.filter((e) => (!state.catFilter || e.category === state.catFilter)
-    && (!state.errorsOnly || e.status === "error")
+    && (!state.errorsOnly || PROBLEMS.has(e.status))
     && (!q || [e.tool_name, e.target, e.summary].some((v) => (v || "").toLowerCase().includes(q))));
   count.textContent = rows.length === events.length ? plural(events.length, "event") : `${rows.length} of ${plural(events.length, "event")}`;
   if (!rows.length) {
@@ -714,7 +734,7 @@ function renderEventTable(host, count) {
         h("td", { class: "nowrap" }, prettyTool(e.tool_name)),
         h("td", { class: "target", title: text(e) }, firstLine(text(e))),
         h("td", { class: "r num nowrap" }, isCall ? fmtDur(e.duration_ms) : ""),
-        h("td", { class: "nowrap" }, isCall && e.status !== "ok" ? statusText(e.status) : ""));
+        h("td", { class: "nowrap" }, e.status && e.status !== "ok" ? statusText(e.status) : ""));
     }))));
 }
 

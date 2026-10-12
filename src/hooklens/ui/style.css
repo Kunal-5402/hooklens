@@ -140,6 +140,7 @@ button.stat:hover { background: var(--surface-2); }
 .tr-turn .tr-text { font-weight: 500; }
 .tr-turn.system .tr-text { color: var(--ink-2); font-weight: 400; }
 .tag { flex: none; font-size: 10.5px; line-height: 16px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
+.tag.bad { color: var(--critical-ink); border-color: transparent; background: var(--critical-bg); }
 .tr-calls { color: var(--ink-2); }
 .tr-err { display: flex; justify-content: flex-end; }
 .tr-dur { color: var(--ink-2); font-size: 12px; white-space: nowrap; }
@@ -244,7 +245,7 @@ td.target { max-width: 560px; overflow: hidden; text-overflow: ellipsis; white-s
 .t-bar { display: block; height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; }
 .t-bar > span { display: block; height: 100%; border-radius: 3px; }
 .status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.status.error { color: var(--critical-ink); }
+.status.error, .status.blocked { color: var(--critical-ink); }
 .status.running, .status.interrupted { color: var(--muted); }
 
 .events { padding: 12px 8px 8px; }

@@ -36,6 +36,7 @@ For the step-by-step call flow, see [sequence.md](sequence.md).
 |------|-----|
 | `cli.py` | The `hooklens` command. Parses arguments and calls the other modules. |
 | `hook.py` | Runs inside the agent. Reads stdin, trims long strings, inserts 1 raw row. |
+| `policy.py` | The optional policy webhook: asks the engine, then gives the agent its decision. See [policy.md](policy.md). |
 | `install.py` | Adds and removes our hooks in the agent config files. Makes a backup first. |
 | `cleanup.py` | Deletes what hooklens created (data files, backups), and nothing else. |
 | `db.py` | Opens SQLite (WAL mode) and creates the tables. |
