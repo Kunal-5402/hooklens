@@ -16,6 +16,10 @@ def error_log() -> Path:
     return home() / "errors.log"
 
 
+def policy_config() -> Path:
+    return home() / "policy.json"
+
+
 def claude_settings() -> Path:
     return Path(os.environ.get("HOOKLENS_CLAUDE_SETTINGS") or Path.home() / ".claude" / "settings.json")
 
