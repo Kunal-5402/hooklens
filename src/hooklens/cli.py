@@ -263,7 +263,10 @@ def cmd_ingest(args) -> int:
     from hooklens import db, normalize
 
     conn = db.connect()
-    print(f"Processed {normalize.ingest(conn)} raw event(s).")
+    try:
+        print(f"Processed {normalize.ingest(conn)} raw event(s).")
+    finally:
+        conn.close()
     return 0
 
 
@@ -286,8 +289,11 @@ def cmd_sessions(args) -> int:
     from hooklens import db, normalize, queries
 
     conn = db.connect()
-    normalize.ingest(conn)
-    rows = queries.list_sessions(conn, args.agent, args.limit)
+    try:
+        normalize.ingest(conn)
+        rows = queries.list_sessions(conn, args.agent, args.limit)
+    finally:
+        conn.close()
     if not rows:
         print("No sessions yet. Install hooks with `hooklens install`, then use your agent.")
         return 0
@@ -317,6 +323,7 @@ def cmd_show(args) -> int:
     if args.session:
         sid = queries.find_session(conn, args.session)
         if not sid:
+            conn.close()
             print(f"No unique session matches '{args.session}'. Run `hooklens sessions`.", file=sys.stderr)
             return 1
         fragment = f"#{sid}"
@@ -359,6 +366,7 @@ def cmd_doctor(args) -> int:
             print(f"  last event: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last))}")
         elif events:
             print("  no events received yet. Start a new session of the agent.")
+    conn.close()
     python = sys.executable
     print(f"Hook interpreter: {python} ({'ok' if os.access(python, os.X_OK) else 'MISSING'})")
     from hooklens import policy
